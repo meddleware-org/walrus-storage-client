@@ -51,7 +51,7 @@
 
 ## Deferred documentation — NOT for the `docs.` website (planned here per Part 0.4)
 
-> Captured for the future **`dev.meddleware.co.uk`** subdomain and white-label offering; excluded
+> Captured for the future **`meddleware.dev`** subdomain and white-label offering; excluded
 > from the user-facing `docs.` site. The user-facing Walrus Storage docs cover *what/how/when* only.
 
 ### `dev.` — developer integration (to write later)

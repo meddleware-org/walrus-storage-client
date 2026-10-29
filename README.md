@@ -171,7 +171,7 @@ When the upload relay is protected by an `nft-gate` auth gateway, the caller mus
 import { createRelayAccessToken, createWalrusClient } from '@meddleware/walrus-storage-client'
 
 const token = await createRelayAccessToken({
-  relayHost: 'https://sui-walrus-storage-relay-testnet.meddleware.co.uk',
+  relayHost: 'https://sui-walrus-storage-relay-testnet.meddleware.dev',
   address: walletAddress,
   gateId, // the Gate the relay guards (0x + 64 lower-case hex)
   network: 'testnet',
