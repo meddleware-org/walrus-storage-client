@@ -57,7 +57,7 @@ container image), PROXY, GO, RUST, SITE, PLATFORM.
   on 2026-10-10 (run 38079428163). It was red on 2026-10-21 and 2026-10-22 (F25, a floating Sui node image) and green
   again on 2026-10-22 after the fix (run 39766927302, commit `75cd12a`).
 
-**Review date:** 2026-10-03, re-verified 2026-10-09, fix wave 2026-10-10, release status 2026-10-18
+**Review date:** 2026-10-03, re-verified 2026-10-09, fix wave 2026-10-10, release status 2026-10-18; 0.0.33 re-verified 2026-10-30 (Point links at the machine zone (ADR-0005); depend on access-gate-gateway-client ^0)
 **Reviewer:** Internal review
 **Severity ceiling:** High.
 
