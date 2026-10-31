@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.34] - 2026-10-31
+
+- Node-only uploadLocalFile moves into the ./node entry so browser bundles no longer reach node:fs.
+
 ## [0.0.33] - 2026-10-30
 
 - Point links at the machine zone (ADR-0005); depend on access-gate-gateway-client ^0.0.22. No API change.

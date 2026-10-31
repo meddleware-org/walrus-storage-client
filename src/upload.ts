@@ -84,23 +84,6 @@ export async function uploadBytes(
 }
 
 /**
- * Read a local file and upload it as a Walrus quilt. Node.js only.
- *
- * @throws {Error} if the file cannot be read or the upload fails.
- */
-export async function uploadLocalFile(
-  client: WalrusClient,
-  filePath: string,
-  identifier: string,
-  signer: Signer,
-  options: UploadOptions = {},
-): Promise<UploadResult> {
-  const { readFile } = await import('node:fs/promises')
-  const contents = await readFile(filePath)
-  return uploadBytes(client, new Uint8Array(contents), identifier, signer, options)
-}
-
-/**
  * Begin a multi-step quilt upload flow suitable for browser wallet signing.
  * The caller drives the flow: encode → register (wallet signs) → upload → certify (wallet signs).
  */

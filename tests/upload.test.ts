@@ -12,7 +12,6 @@ vi.mock('node:fs/promises', () => ({ readFile: (...a: unknown[]) => readFileMock
 
 import {
   uploadBytes,
-  uploadLocalFile,
   uploadImageBytes,
   createBlobUploadFlow,
   maxEpochsAhead,
@@ -20,6 +19,7 @@ import {
   LONG_TERM_EPOCHS,
   MAX_SINGLE_RESERVATION_EPOCHS,
 } from '../src/upload.js'
+import { uploadLocalFile } from '../src/node.js'
 
 // Minimal fake WalrusClient capturing the writeFiles/writeFilesFlow calls.
 function fakeClient() {
@@ -132,5 +132,15 @@ describe('createUploadFlow', () => {
     expect(flow).toEqual({ __flow: true })
     // no signer is involved in the browser flow
     expect(client.walrus.writeFiles).not.toHaveBeenCalled()
+  })
+})
+
+describe('browser-reachable modules', () => {
+  it('import no node: builtin: only ./node (the Node entry) may', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs')
+    for (const file of readdirSync('src').filter((f) => f.endsWith('.ts') && f !== 'node.ts')) {
+      // A browser bundler resolves a dynamic import too, and externalises the builtin with a warning.
+      expect(readFileSync(`src/${file}`, 'utf8'), `src/${file}`).not.toMatch(/['"]node:/)
+    }
   })
 })
