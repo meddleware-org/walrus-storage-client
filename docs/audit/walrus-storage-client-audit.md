@@ -16,10 +16,10 @@
 (shell + Docker Compose)
 **Template:**
 
-- AUDIT_TEMPLATE.md (2026-10-08)
+- AUDIT_TEMPLATE.md (2026-11-01)
 - AUDIT_TEMPLATE_WALRUS.md (2026-09-30)
 - AUDIT_TEMPLATE_SUI_CLIENT.md (2026-10-08)
-- AUDIT_TEMPLATE_TS.md (2026-10-08)
+- AUDIT_TEMPLATE_TS.md (2026-11-01)
 - AUDIT_TEMPLATE_OPS.md (2026-10-08) — applied to the localnet harness and the integration workflow
   only. They sign on an ephemeral localnet, never on a real chain.
 
@@ -57,7 +57,7 @@ container image), PROXY, GO, RUST, SITE, PLATFORM.
   on 2026-10-10 (run 38079428163). It was red on 2026-10-21 and 2026-10-22 (F25, a floating Sui node image) and green
   again on 2026-10-22 after the fix (run 39766927302, commit `75cd12a`).
 
-**Review date:** 2026-10-03, re-verified 2026-10-09, fix wave 2026-10-10, release status 2026-10-18; 0.0.33 re-verified 2026-10-30 (Point links at the machine zone (ADR-0005); depend on access-gate-gateway-client ^0); 0.0.34 re-verified 2026-10-31 (Node-only uploadLocalFile moves into the )
+**Review date:** 2026-10-03, re-verified 2026-10-09, fix wave 2026-10-10, release status 2026-10-18; 0.0.33 released 2026-10-30 (Point links at the machine zone (ADR-0005); depend on access-gate-gateway-client ^0); 0.0.34 released 2026-10-31 (Node-only uploadLocalFile moves into the ); frontend-wave delta review 2026-11-01 (real review of the 2026-10-19 → 2026-11-01 changes; see the delta section)
 **Reviewer:** Internal review
 **Severity ceiling:** High.
 
@@ -245,6 +245,8 @@ findings. The 2026-10-09 re-verification re-read every finding against `main` (`
    wallet prompt, so the flow would have failed on every gated upload once it took 0.0.18. 0.0.30 passes the gateway's real challenge expiry (commit `ed1257f`), pinned by a regression test.
 
 ---
+
+**2026-11-01 update.** Since 2026-10-19 the package moved its Node-only helper out of the browser entry (0.0.34), adopted the v3 access proof (0.0.32) and had its localnet harness made hermetic. This review added the missing test for the browser-entry rule (F27) and recorded a dev-only moderate advisory (F28); the shipped code needed no change, so no release is made for this audit.
 
 ## Threat model / trust boundaries
 
@@ -982,6 +984,33 @@ challenge" (a fresh challenge yields a token; an expired one rejects with /expir
 
 ---
 
+### Frontend wave delta review (2026-11-01) — 0.0.32 to 0.0.34
+
+Scope: the changes since the 2026-10-19 review: `0.0.31` rename (ADR-0003), `0.0.32` (access proofs use the `access-gate-gateway:access:v3` message through `@meddleware/access-gate-gateway-client` 0.0.21; ADR-0004), `0.0.33` (links), `0.0.34` (`uploadLocalFile` moves to the `./node` entry) and the localnet harness fix (CI and test only; the nightly run was red on 2026-10-21/22 and is green since 2026-10-26). Read the diff of `src/` (`access.ts`, `client.ts`, `flow.ts`, `http.ts`, `node.ts`, `upload.ts`, `manage.ts`, `index.ts`), the tests, the workflows and `localnet/`; ran `npm ci`, `npm ls --all`, `npm audit --audit-level=high` (exit 0; ten moderate findings, F28), `tsc --noEmit`, eslint, `vitest` (11 files, 133 tests; 138 with the new file), `npm pack --dry-run` (25 files, 154 kB: `src/`, `dist/*.d.ts`, `CHANGELOG.md`, `SECURITY.md`, no tests, `localnet/` or audit); checked the latest nightly localnet runs (7 consecutive successes through 2026-10-31).
+
+### F27 — Nothing proved that the browser entries stay free of Node built-ins
+**Severity:** Low   **Disposition:** RESOLVED
+**Where:** `src/node.ts`, `src/upload.ts`; `tests/package.test.ts` (checks the `exports` map only).
+**Issue:** 0.0.34 moved `uploadLocalFile` into `./node` because a browser bundler resolves every import it can see — even a dynamic `import('node:fs/promises')` that never runs there — so the main entry broke browser builds (walrus-storage-ui, token-issuance-ui and the Walrus library import it). The reason was documented but not tested: a later helper added to `upload.ts` could reintroduce a `node:` import.
+**Impact:** a browser build failure (or a polyfill pulled in) in every Walrus UI.
+**Remediation / evidence:** `tests/browser-entries.test.ts` (5 tests) walks the relative-import graph of `index.ts`, `flow.ts` and `http.ts` (static, `export … from` and dynamic imports) and asserts no `node:` specifier; asserts that `node.ts` is the only module with one (`node:fs/promises`); and checks that the walker really visits `upload.ts` from the Node entry (not vacuous). Test-only change, no release needed.
+
+### F28 — Moderate `minimatch` advisory in the lint toolchain
+**Severity:** Info   **Disposition:** ACCEPTED-RISK
+**Where:** dev dependencies (`eslint` → `@eslint/config-array` / `typescript-eslint` → `minimatch` < 11.0.1; GHSA-g3hv-75wg-m249, denial of service through glob amplification).
+**Issue:** `npm audit` reports ten moderate findings, all one chain in the dev-only linting stack. The offered "fix" is `npm audit fix --force`, which installs `eslint@4.0.0` — a downgrade, not a fix.
+**Impact:** none: the packages are not in the tarball and not installed by consumers; the library runs no glob on untrusted patterns; CI runs lint on this repository's own files. The CI gate is `--audit-level=high` (D110), which stays green.
+**Remediation / evidence:** accepted until `eslint`/`typescript-eslint` take `minimatch` ≥ 11.0.1; Dependabot's grouped PR will propose it. Re-check on each pass.
+
+### F29 — Positive: the localnet gate is hermetic, pinned and fail-fast
+**Severity:** Positive
+**Where:** `.github/workflows/integration.yml`, `localnet/scripts/lib.sh`, `localnet/testbed.override.yml`, `tests/integration/wal-funding.ts`.
+**Evidence:** the Sui node image is pinned by digest (`mysten/sui-tools:mainnet-v1.82.3@sha256:9dbefdc…`) after the floating `mainnet` tag moved to a gRPC-only node and silently left the test wallet unfunded; the `sui` CLI is installed by a pinned `suiup` release verified by SHA-256, and the binary is verified again; the sibling `access-gate-sui` checkout is a commit SHA; funding is fail-fast with a floor derived from the testbed's storage prices (`wal-funding.test.ts`); the schedule runs on a local chain only (no real funds, base §B.2), and the publish workflow refuses a tag while the latest run is red (`.github/localnet-gate.mjs`).
+
+### Delta notes
+- **OPS/WALRUS/SC rows:** unchanged; the relay-auth origin and tip-ceiling findings (F-series above) still hold — `access.ts` changed only in its message string and dependency names.
+- **Dependencies:** runtime `@meddleware/access-gate-gateway-client` ^0.0.22; `@types/node` ~26.6.5 (dev).
+
 ## Section A — Invariant verification matrix
 
 | # | Invariant | Enforced / asserted at | Proven by | Status |
@@ -1392,6 +1421,7 @@ the harness is localnet-only and no real-chain job exists.
     0.0.30 passes the gateway's real expiry; regression test in `tests/flow.test.ts`. The localnet nightly harness was fixed the same day (F25, already recorded). Counts: **18 RESOLVED, 1 MITIGATED (F13), 1 ADJUDICATED, 3 Positive** (23 findings).
   - **Decided 2026-10-22:** F11 / OQ4 — no verification of aggregator bytes in the SDK: AEAD covers sealed content, and anything needing integrity re-derives the blob id. Section D box "read integrity for content the apps depend on" ticked. The mainnet relay/aggregator/publisher and tip/WAL/expiry boxes stay open (maintainer-only, mainnet).
   - Verified: npm `latest` of this package and of `access-gate-gateway-client` read with `npm view` (0.0.30, 0.0.18); tags read with git. Not re-run: the unit suite (the audit's last measured count is the 0.0.30 commit's own CI).
+- 2026-11-01 — frontend-wave delta review of 0.0.32–0.0.34. Read the access, node-entry, client and flow diffs and the localnet harness; ran npm ci/ls, the audit (high gate exit 0), type-check, lint, 138 tests, pack contents; checked 7 green nightly localnet runs. Added tests/browser-entries.test.ts (F27, test-only), recorded the dev-only moderate minimatch advisory (F28, accepted) and the pinned harness (F29, Positive). Release-tool marks for 0.0.33/0.0.34 reworded to "released". `**Template:**` dates reconciled to the 2026-11-01 registry (TS/base changes add rows; no disposition change).
 
 ## Pre-save consistency checklist (this pass)
 
