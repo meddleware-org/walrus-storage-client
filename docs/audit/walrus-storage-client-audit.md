@@ -1192,7 +1192,7 @@ historical until a maintainer re-runs `vitest --coverage`.
 - [x] packaging refresh: `.d.ts` (D34), `SECURITY.md` in `files`, lint and no `--if-present` in publish, `engines`, `AGENTS.md` — F18, 0.0.28 (commit `cdafcd3`); `tests/package.test.ts`
 - [x] Info hardening: `relayAuthFetch` edge cases (F14), attribute-error classification (F15), `deletable` in listings (F16) — 0.0.28 (commit `cdafcd3`); `tests/client.test.ts`, `tests/manage.test.ts`, `tests/query.test.ts`
 - [x] localnet suite green on the release commit, or alerted on (OQ5) — F24, 0.0.28 (commit `cdafcd3`): alert issue on a red nightly and the `localnet-gate` release gate; `tests/localnet-gate.test.ts`
-- [ ] external review — maintainer-only
+- [ ] external review (ADR-0009 gate G4: not a launch gate; covered by redeploy and the audit pass) — maintainer-only
 
 ---
 
