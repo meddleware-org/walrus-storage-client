@@ -297,7 +297,7 @@ Network endpoints are defined in `src/client.ts` and exported as `DEFAULT_RPC_UR
 
 ### Upload relay
 
-`createWalrusClient` falls back to the MeddleWare upload relay when no `uploadRelayHost` is supplied. An upload relay is REQUIRED for browser uploads (direct-to-storage-node writes fail from browsers). To upload directly to Walrus storage nodes with **no** relay (e.g. from Node.js, or when the relay infra is unavailable), pass `disableUploadRelay: true`:
+`createWalrusClient` falls back to the public Walrus upload relay of the network (`PUBLIC_UPLOAD_RELAY_HOSTS`, run by Mysten) when no `uploadRelayHost` is supplied; pass your own host to use another relay. An upload relay is REQUIRED for browser uploads (direct-to-storage-node writes fail from browsers). To upload directly to Walrus storage nodes with **no** relay (e.g. from Node.js, or when the relay infra is unavailable), pass `disableUploadRelay: true`:
 
 ```ts
 const client = createWalrusClient({ network: 'testnet', disableUploadRelay: true })
@@ -359,7 +359,7 @@ try {
 - [Walrus SDK documentation](https://docs.walrus.space/)
 - [Sui TypeScript SDK](https://sui-typescript-docs.vercel.app/)
 - Package notes: [CLAUDE.md](CLAUDE.md) · agent policy: [AGENTS.md](AGENTS.md)
-- Self-hosted relay: canonical location `infrastructure/k8s/walrus-relay` in the vault monorepo
+- Self-hosted relay: see the Walrus operator guide for the upload relay; point `uploadRelayHost` at it
 
 ## License
 
