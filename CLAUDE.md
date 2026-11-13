@@ -47,6 +47,42 @@
   up as an `@mysten/walrus` release, so keep that dependency current instead. Add a drift test (as in
   access-gate-client) if a direct `tx.moveCall` is ever added.
 
+## Layout, commands and release
+
+```text
+src/index.ts    public re-exports of the root entry (`.`)
+src/client.ts   createWalrusClient(), host constants (DEFAULT_RPC_URLS, PUBLIC_UPLOAD_RELAY_HOSTS, WALRUS_AGGREGATOR_HOSTS,
+                DEFAULT_UPLOAD_RELAY_MAX_TIP_MIST), WalrusNetwork, relayAuthFetch
+src/limits.ts   epoch and tip-cap validation (assertEpochs, assertTipCapMist), MAX_SINGLE_RESERVATION_EPOCHS (53, the Walrus
+                `max_epochs_ahead` fallback)
+src/upload.ts   uploadBytes, createUploadFlow (browser-safe multi-step), uploadImageBytes, createBlobUploadFlow, LONG_TERM_EPOCHS (200)
+src/manage.ts   extendBlobLifetime, setBlobAttributes, readBlobAttributes (+ *Transaction variants returning an unsigned Transaction)
+src/query.ts    fetchOwnedWalrusBlobs (dynamic type resolution)
+src/access.ts   challenge/proof construction for the NFT-gated relay (createRelayAccessToken, buildAccessProofToken, fetchRelayChallenge)
+src/flow.ts     `./flow`: runBlobUpload and the resume conventions; conflict handling via access-gate-gateway-client's parseGatewayError
+src/http.ts     `./http`: publisher store and aggregator read over fetch; https only, bounded responses, no redirects
+src/node.ts     `./node`: Node-only filesystem upload (uploadLocalFile)
+tests/          vitest unit tests (mocked client), packaging and release-gate tests; tests/integration is the localnet suite
+localnet/       Docker localnet harness (not published)
+```
+
+`npm run type-check`, `npm run lint`, `npm test`, `npm run build` (declarations into `dist/`), `npm run test:integration` (localnet suite;
+needs `localnet/scripts/up.sh` + `bootstrap-localnet.sh` first). Licence: 0BSD; Node.js >= 24 (`engines`) and browsers (via Vite).
+
+Release (CI on a `v*` tag, npm trusted publishing, `npm-publish.yml`; `prepublishOnly` rebuilds the declarations):
+
+1. Bump `version` in `package.json` and the lockfile root entry (`npm version patch --no-git-tag-version`; patch bumps only until mainnet).
+2. Add a `CHANGELOG.md` entry.
+3. `npm run type-check`, `npm run lint`, `npm test` and `npm run build` pass.
+4. `@mysten/sui` and `@mysten/walrus` versions match the target Sui/Walrus testnet release.
+5. The localnet suite is green: the publish workflow's `localnet-gate` blocks a tag while the newest "Integration (localnet)" run on main is
+   red or older than 72 h. After a fix, dispatch the workflow on main (or on the commit to tag) and wait for it to pass before pushing the tag.
+
+Consumers to coordinate with on breaking changes: `@meddleware/walrus-storage-kit` (relay UI library; wires `createWalrusClient` /
+`createBlobUploadFlow` into the upload widget), `@meddleware/walrus-storage-ui` (standalone uploader app), `token-issuance-ui` (token icon
+upload) and the other apps that depend on this package. Its own upstream dependency is `@meddleware/access-gate-gateway-client` (the
+access-proof wire format re-exported from `src/access.ts`).
+
 ---
 
 ## Deferred documentation — NOT for the `docs.` website (planned here per Part 0.4)
