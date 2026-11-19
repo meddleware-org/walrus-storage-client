@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `forgetExpiredConsumes(storage, now?)` removes every stored consume record that can no longer resume (older than
+  `CONSUME_RESUME_MAX_AGE_MS`, dated in the future, or unreadable); `browserStorage()` runs it once when created, so an abandoned
+  upload's record does not stay on the device (PECR: keep only what the person's own upload needs). Pending certifications are not
+  swept: they stand for storage already paid for.
+
 ## [0.0.34] - 2026-10-31
 
 - Node-only uploadLocalFile moves into the ./node entry so browser bundles no longer reach node:fs.

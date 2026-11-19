@@ -211,6 +211,11 @@ export function browserStorage(): StorageLike {
       return null
     }
   }
+  try {
+    if (typeof window !== 'undefined') forgetExpiredConsumes(window.localStorage)
+  } catch {
+    // storage unavailable: nothing was kept
+  }
   return {
     getItem(key) {
       try {
@@ -238,6 +243,37 @@ export function browserStorage(): StorageLike {
       }
     },
   }
+}
+
+/** The part of the Web Storage API a sweep needs: enumerate, read, remove. */
+export interface EnumerableStorage extends StorageLike {
+  readonly length: number
+  key(index: number): string | null
+}
+
+/**
+ * Remove every stored consume (any network, gate or address) that can no longer be resumed: older than
+ * {@link CONSUME_RESUME_MAX_AGE_MS}, dated in the future, or unreadable. {@link browserStorage} runs it once when created, so a record
+ * for an upload the person abandoned does not stay on the device (workspace docs/legal STORAGE_LEDGER B5). Pending certifications are
+ * not swept: one may stand for storage already paid for, and goes only when certified ({@link clearPendingCertify}).
+ */
+export function forgetExpiredConsumes(storage: EnumerableStorage, now: number = Date.now()): number {
+  const doomed: string[] = []
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i)
+    if (!key || !key.startsWith('mw:walrus:consume:')) continue
+    let savedAt: unknown
+    try {
+      savedAt = (JSON.parse(storage.getItem(key) ?? 'null') as { savedAt?: unknown } | null)?.savedAt
+    } catch {
+      savedAt = undefined
+    }
+    if (typeof savedAt !== 'number' || !Number.isFinite(savedAt) || now - savedAt > CONSUME_RESUME_MAX_AGE_MS || savedAt > now + 60_000) {
+      doomed.push(key)
+    }
+  }
+  for (const key of doomed) storage.removeItem(key)
+  return doomed.length
 }
 
 /** Stable per-(network, address) key for pending certifications. */

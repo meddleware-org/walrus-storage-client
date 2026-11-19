@@ -21,6 +21,7 @@ import {
   gatewayConflictCodeOf,
   loadPendingCertifies,
   browserStorage,
+  forgetExpiredConsumes,
   pendingCertifyKey,
   runBlobUpload,
   savePendingCertify,
@@ -641,6 +642,45 @@ describe('browserStorage', () => {
     storage.setItem('k', 'v')
     expect(map.get('k')).toBe('v')
     expect(browserStorage().getItem('k')).toBe('v') // survives a new instance (a reload)
+  })
+})
+
+describe('forgetExpiredConsumes (STORAGE_LEDGER B5)', () => {
+  const enumerable = (entries: Record<string, string>) => {
+    const map = new Map(Object.entries(entries))
+    return {
+      map,
+      get length() {
+        return map.size
+      },
+      key: (i: number) => [...map.keys()][i] ?? null,
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    }
+  }
+
+  it('removes consumes that can no longer resume and leaves everything else', () => {
+    const now = 1_800_000_000_000
+    const fresh = JSON.stringify({ digest: 'd', nftId: 'n', savedAt: now - 1000 })
+    const s = enumerable({
+      'mw:walrus:consume:testnet:g1:a': fresh,
+      'mw:walrus:consume:testnet:g2:a': JSON.stringify({ digest: 'd', nftId: 'n', savedAt: now - CONSUME_RESUME_MAX_AGE_MS - 1 }),
+      'mw:walrus:consume:testnet:g3:a': JSON.stringify({ digest: 'd', nftId: 'n', savedAt: now + 3_600_000 }),
+      'mw:walrus:consume:testnet:g4:a': '{not json',
+      'mw:walrus:pendingCertify:testnet:a': JSON.stringify({ x: { savedAt: 0 } }),
+      'mw-color-mode': 'dark',
+    })
+    expect(forgetExpiredConsumes(s, now)).toBe(3)
+    expect([...s.map.keys()].sort()).toEqual(['mw-color-mode', 'mw:walrus:consume:testnet:g1:a', 'mw:walrus:pendingCertify:testnet:a'])
+  })
+
+  it('runs when browserStorage is created', () => {
+    const s = enumerable({ 'mw:walrus:consume:testnet:g:a': JSON.stringify({ digest: 'd', nftId: 'n', savedAt: 0 }) })
+    vi.stubGlobal('window', { localStorage: s })
+    browserStorage()
+    expect(s.map.size).toBe(0)
+    vi.unstubAllGlobals()
   })
 })
 
