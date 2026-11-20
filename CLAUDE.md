@@ -107,3 +107,7 @@ access-proof wire format re-exported from `src/access.ts`).
 - Running against an operator's **own upload relay** (`uploadRelayHost`) and RPC (`rpcUrl` overrides,
   never removes, `DEFAULT_RPC_URLS`); the `uploadRelayMaxTipMist` tip ceiling; how relay commission is
   enforced by `PlatformConfig`/`access_gate`, not by this library.
+
+## Interoperability
+
+- [docs/INTEROP.md](docs/INTEROP.md): the standards this project speaks, what is planned, where to extend it, and what proves each claim.
