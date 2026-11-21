@@ -1,3 +1,13 @@
+/**
+ * @file Managing a stored blob: extend its lifetime, certify it, price it, and read or write its on-chain attributes.
+ *
+ * Role: Walrus blobs expire, so owners must be able to extend them; each action has a Node variant (signs and executes with a keypair) and a browser variant (builds an
+ * unsigned transaction for a wallet). A few SDK behaviours are worked around here and each is explained where it happens: the SDK cannot tell "this blob has no attributes"
+ * from "there is no such blob", so the Blob object is checked before either is reported.
+ *
+ * Main exports: `extendBlobLifetime`, `extendBlobLifetimeTransaction`, `certifyBlobTransaction`, `estimateStorageCost`, `setBlobAttributes`, `readBlobAttributes`.
+ * Tested in `tests/manage.test.ts`.
+ */
 import type { Signer } from '@mysten/sui/cryptography'
 import { Transaction } from '@mysten/sui/transactions'
 import { normalizeStructTag } from '@mysten/sui/utils'
@@ -13,6 +23,7 @@ export type WalrusClient = ReturnType<typeof createWalrusClient>
  * is raised for a wrong parent id, so callers confirm the Blob exists ({@link assertBlobObject}).
  */
 function isMissingFieldError(err: unknown): boolean {
+  // Duck-typed on `code`: the SDK's error class is not exported, and message text can change between versions.
   const code = (err as { code?: unknown } | null)?.code
   return code === 'notExists' || code === 'dynamicFieldNotFound'
 }
@@ -22,14 +33,17 @@ function isMissingFieldError(err: unknown): boolean {
  * blob has no attributes yet" is never confused with "there is no such blob".
  */
 async function assertBlobObject(client: WalrusClient, blobObjectId: string): Promise<void> {
+  // The Blob struct's full type, from the Walrus client.
   const blobType = await client.walrus.getBlobType()
   let type: string
   try {
     type = (await client.core.getObject({ objectId: blobObjectId })).object.type
   } catch (err) {
+    // The same error code means "no such object" here; any other failure (a network error) is rethrown untouched.
     if (isMissingFieldError(err)) throw new Error(`walrus-storage-client: no Walrus Blob object ${blobObjectId}`, { cause: err })
     throw err
   }
+  // The object exists but is something else (a coin, a look-alike): refuse, comparing normalised types.
   if (normalizeStructTag(type) !== normalizeStructTag(blobType)) {
     throw new Error(`walrus-storage-client: object ${blobObjectId} is not a Walrus Blob`)
   }
@@ -59,6 +73,7 @@ export async function extendBlobLifetime(
   signer: Signer,
   options: ExtendOptions,
 ): Promise<{ digest: string }> {
+  // The SDK signs, executes and waits; `options` is exactly one of `epochs` or `endEpoch` (the union type forbids both).
   const result = await client.walrus.executeExtendBlobTransaction({
     blobObjectId,
     signer,
@@ -110,6 +125,7 @@ export interface CertifyOptions {
  * @returns An unsigned `Transaction`.
  */
 export function certifyBlobTransaction(client: WalrusClient, options: CertifyOptions) {
+  // `deletable` must match how the blob was registered, or the on-chain call aborts; our uploads register non-deletable, hence the default.
   return client.walrus.certifyBlobTransaction({
     blobId: options.blobId,
     blobObjectId: options.blobObjectId,
@@ -162,6 +178,7 @@ export async function setBlobAttributes(
   signer: Signer,
   attributes: Record<string, string | null>,
 ): Promise<{ digest: string }> {
+  // The common path: the SDK reads the existing attributes, computes a diff, and writes it.
   try {
     const result = await client.walrus.executeWriteBlobAttributesTransaction({
       blobObjectId,
@@ -176,6 +193,7 @@ export async function setBlobAttributes(
     // struct itself (null-valued keys are simply skipped, correct for a fresh blob). The SDK still
     // signs, executes, and waits internally. The same error also means "no such object", so the
     // Blob is confirmed to exist first.
+    // Any other error is real. Otherwise confirm the Blob exists (the same code also means "no such object"), then retry the first-write way.
     if (!isMissingFieldError(err)) throw err
     await assertBlobObject(client, blobObjectId)
     const tx = new Transaction()
@@ -203,6 +221,7 @@ export function setBlobAttributesTransaction(
   blobObjectId: string,
   attributes: Record<string, string | null>,
 ) {
+  // The SDK reads the current attributes to diff against; a null value deletes a key.
   return client.walrus.writeBlobAttributesTransaction({ blobObjectId, attributes })
 }
 
@@ -226,6 +245,7 @@ export async function readBlobAttributes(
     if (!isMissingFieldError(err)) throw err
     attributes = null
   }
+  // Attributes were read: return them as they are.
   if (attributes !== null) return attributes
   // `null` must mean "this Blob has no attributes", never "no such object" (the SDK cannot tell the two apart).
   await assertBlobObject(client, blobObjectId)

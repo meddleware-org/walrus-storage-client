@@ -1,10 +1,19 @@
+# The Sui CLI client configuration the testbed's deployer container uses (walrus-deploy). It is mounted into the container at runtime by `up.sh` (a copy is made under
+# `generated/`, which is gitignored) and is NOT used on the host: the host's own Sui CLI state is isolated in `localnet/.sui` (see lib.sh).
+#
+# Everything here is local to the throwaway testbed: the RPC name `sui-localnet` is the container's name on the testbed's Docker network, and the active address is the
+# fixed, public, burned deployer key described in lib.sh (it controls nothing outside the testbed). The keystore path is inside the container.
 ---
+# Where the deployer's keys live inside the container (generated at runtime from the fixed key; not committed).
 keystore:
   File: /root/.sui/sui_config/sui.keystore
+# The only environment: the testbed's own full node, reached by its container name.
 envs:
   - alias: localnet
     rpc: "http://sui-localnet:9000"
+    # No websocket and no basic auth: a local node needs neither.
     ws: ~
     basic_auth: ~
 active_env: localnet
+# The fixed deployer address (the public burned key in lib.sh): the account that deploys Walrus and mints the WAL tokens the test wallets are funded with.
 active_address: "0x222456ac3f6afb4bb9a10f6eae82fc8d3ac2ae3ea4c27b1516914b1708ba838c"

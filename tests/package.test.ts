@@ -4,7 +4,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
+/** The path of a file in the repository root. */
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url))
+// The parts of package.json these tests read.
 const pkg = JSON.parse(readFileSync(root('package.json'), 'utf8')) as {
   files: string[]
   engines: { node: string }
@@ -32,7 +34,8 @@ describe('package.json', () => {
   it('builds declarations only, before every publish', () => {
     expect(pkg.scripts.build).toBe('rm -rf dist && tsc -p tsconfig.build.json')
     expect(pkg.scripts.prepublishOnly).toBe('npm run build')
-    const build = JSON.parse(readFileSync(root('tsconfig.build.json'), 'utf8')) as {
+    // tsconfig files are JSONC (they carry comments), so the comments are stripped before parsing.
+    const build = JSON.parse(readFileSync(root('tsconfig.build.json'), 'utf8').replace(/^\s*\/\/.*$/gm, '')) as {
       compilerOptions: Record<string, unknown>
       include: string[]
     }

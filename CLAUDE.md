@@ -85,6 +85,34 @@ access-proof wire format re-exported from `src/access.ts`).
 
 ---
 
+## Commands
+
+```bash
+npm ci && npm run type-check && npm run lint && npm test && npm run build   # the core of what the `check` CI job runs
+npm audit --audit-level=high                                                # the dependency check (this repo does not use mw-audit-gate)
+shellcheck -x -P SCRIPTDIR localnet/scripts/*.sh localnet/files/*.sh        # the localnet harness (a CI job)
+npm run test:integration                                                    # localnet suite: `bash localnet/scripts/up.sh && bash localnet/scripts/bootstrap-localnet.sh`, then `source localnet/.env.localnet`
+```
+
+## Gotchas
+
+- **The localnet suite is a release gate.** `npm-publish.yml`'s `localnet-gate` blocks a tag while the newest "Integration (localnet)" run on main is red or older than 72 h; the run is nightly
+  and has passed every night checked (2026-11-18 to 11-21). `.github/localnet-gate.mjs` is tested in `tests/localnet-gate.test.ts`.
+- **The localnet deployer private key is committed on purpose** (`localnet/scripts/lib.sh`): a public, burned key that controls funds only on the ephemeral testbed. Never fund that address on a
+  real network (audit F17).
+- **Browser storage is the flow's only side effect**: the consume digest (`mw:walrus:consume:…`, up to 4 days, swept) and pending certifications (`mw:walrus:pendingCertify:…`, until certified). Both are
+  in the workspace's `docs/legal/STORAGE_LEDGER.md` (B5, B6) and are strictly necessary for the upload the person started. Do not add a key without a ledger row.
+- **`tsconfig*.json` are JSONC.** `tests/package.test.ts` strips `//` comment lines before parsing `tsconfig.build.json`; keep comments on their own lines.
+- **`WalrusClient` is declared in two files** (`upload.ts` and `manage.ts`, identically) and `structFields` is a copy of `access-gate-client`'s reader: known duplication, harmless today.
+- **There is no `mw-audit-gate`.** This repository does not depend on `@meddleware/frontend-config`; CI runs `npm audit --audit-level=high`.
+
+## Related
+
+- The audit: [`docs/audit/walrus-storage-client-audit.md`](docs/audit/walrus-storage-client-audit.md).
+- How to propose a change: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Consumers (all at `^0.0.35`): `walrus-storage-kit`, `walrus-storage-ui`, `token-issuance-ui`, `sealed-storage-ui`, `docs-site` and `dev-site`; release them after this package. The access-proof
+  protocol: `access-gate-gateway-client`; the Move package the localnet deploys: `access-gate-sui`.
+
 ## Deferred documentation — NOT for the `docs.` website (planned here per Part 0.4)
 
 > Captured for the future **`meddleware.dev`** subdomain and white-label offering; excluded

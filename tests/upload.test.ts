@@ -1,3 +1,7 @@
+/**
+ * Tests for the upload helpers (`src/upload.ts`, `src/node.ts`): files and blobs go to the right SDK call with the right defaults, `epochs` is validated against the live
+ * maximum before any wallet prompt, and the browser-reachable modules do not import Node built-ins. The SDK and the filesystem are doubles.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Capture the args WalrusFile.from receives, and stub writeFilesFlow.
@@ -22,6 +26,7 @@ import {
 import { uploadLocalFile } from '../src/node.js'
 
 // Minimal fake WalrusClient capturing the writeFiles/writeFilesFlow calls.
+/** A Walrus-client double that records every write call and exposes a live `max_epochs_ahead`. */
 function fakeClient() {
   const calls: { writeFiles: any[]; writeFilesFlow: any[] } = { writeFiles: [], writeFilesFlow: [] }
   const client = {
@@ -42,6 +47,7 @@ function fakeClient() {
   return { client: client as any, calls }
 }
 
+/** A stand-in signer: the SDK is a double, so it is never asked to sign. */
 const signer = { __signer: true } as any
 
 beforeEach(() => {

@@ -9,9 +9,11 @@ on:
   schedule:
     - cron: '0 3 * * *' # 03:00 UTC nightly
 
+# Read-only by default; the alert job below is the only one that may write issues.
 permissions:
   contents: read
 
+# No tool may phone home from CI (the fleet's privacy rule).
 env:
   DO_NOT_TRACK: "1"
 
@@ -19,8 +21,10 @@ jobs:
   localnet:
     name: walrus-storage-client localnet suite
     runs-on: ubuntu-latest
+    # The testbed is heavy; a hung run must not occupy a runner for hours.
     timeout-minutes: 45
     steps:
+      # Two checkouts side by side under `repos/`, as the harness expects (it finds the Move package as a sibling).
       - name: Checkout walrus-storage-client (into repos/walrus-storage-client)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,10 +39,12 @@ jobs:
           ref: ${{ vars.ACCESS_GATE_REF || '83dbf25f026aa4be78ad6ec7cae47221c0743bf0' }}
           path: repos/access-gate-sui
 
+      # Node 26 is the fleet baseline (D56).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26'
 
+      # The Sui CLI the harness uses to publish the access gate; the installer and the binary are both pinned by checksum.
       - name: Install sui CLI (suiup)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -54,24 +60,29 @@ jobs:
           echo "c86c0481a44174dfa17af89e71292d6fba5df267c66722ae6797e8793a22f7f1  $HOME/.local/bin/sui" | sha256sum -c -
           # localnet env creation is deferred to bootstrap-localnet.sh (runs after the testbed is up)
 
+      # Start the Sui + Walrus testbed in Docker (a few minutes).
       - name: Bring up the localnet testbed
         working-directory: repos/walrus-storage-client/localnet
         run: bash scripts/up.sh
 
+      # Deploy the access gate, fund the test wallet with WAL, and write the `.env.localnet` contract the tests read.
       - name: Bootstrap localnet (deploy + harvest + .env.localnet)
         working-directory: repos/walrus-storage-client/localnet
         run: bash scripts/bootstrap-localnet.sh
 
+      # The dependencies of the package under test (the localnet tools above need none).
       - name: Install deps
         working-directory: repos/walrus-storage-client
         run: npm ci
 
+      # The env contract is exported into the shell, then the real blob lifecycle runs against the testbed.
       - name: Run localnet integration suite
         working-directory: repos/walrus-storage-client
         run: |
           set -a && source localnet/.env.localnet && set +a
           npm run test:integration
 
+      # Always, so a failed run does not leave containers behind on the runner.
       - name: Tear down
         if: always()
         working-directory: repos/walrus-storage-client/localnet

@@ -5,12 +5,16 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
+/** The path of a file under `src/`. */
 const src = (name: string) => fileURLToPath(new URL(`../src/${name}`, import.meta.url))
+/** Matches `from '…'`, `import('…')` and `import '…'`: every way a module can name another. */
 const SPECIFIER = /(?:from\s+|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g
 
+/** Walk the relative imports from `entry`, returning every file reached and every `node:` import found on the way. */
 function graph(entry: string): { files: Set<string>; nodeImports: string[] } {
   const files = new Set<string>()
   const nodeImports: string[] = []
+  // A work list, so each file is read once even when several files import it.
   const queue = [entry]
   while (queue.length) {
     const file = queue.pop()!
@@ -18,6 +22,7 @@ function graph(entry: string): { files: Set<string>; nodeImports: string[] } {
     files.add(file)
     const text = readFileSync(src(file), 'utf8')
     for (const [, spec] of text.matchAll(SPECIFIER)) {
+      // A Node built-in is recorded; a relative import is followed (rewritten from the `.js` specifier to the `.ts` source); a package import is not our concern.
       if (spec!.startsWith('node:')) nodeImports.push(`${file} → ${spec}`)
       else if (spec!.startsWith('./')) queue.push(spec!.replace(/^\.\//, '').replace(/\.js$/, '.ts'))
     }
@@ -26,6 +31,7 @@ function graph(entry: string): { files: Set<string>; nodeImports: string[] } {
 }
 
 describe('browser entries', () => {
+  // The three entries an app bundles for the browser.
   for (const entry of ['index.ts', 'flow.ts', 'http.ts']) {
     it(`${entry} reaches no node: import`, () => {
       const { files, nodeImports } = graph(entry)

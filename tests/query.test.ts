@@ -1,3 +1,7 @@
+/**
+ * Tests for listing owned Walrus blobs (`src/query.ts`): objects are matched by exact type, every field is read strictly (a malformed object is skipped, never listed with
+ * an invented value), all pages are read and bounded, and ids and epochs come out as the documented types. The clients are doubles.
+ */
 import { describe, it, expect, vi } from 'vitest'
 
 // blobIdFromInt is deterministic in the real SDK; stub it to a readable form so
@@ -8,6 +12,7 @@ vi.mock('@mysten/walrus', () => ({
 
 import { fetchOwnedWalrusBlobs } from '../src/query.js'
 
+/** A Walrus client double that knows only the Blob type. */
 function makeWalrusClient() {
   return {
     walrus: {
@@ -22,6 +27,7 @@ function makeSuiClient(objects: unknown[]) {
   return { client: { core: { listOwnedObjects } } as any, listOwnedObjects }
 }
 
+// The listing parses the gRPC core API's flat JSON; each case below breaks one thing a real or hostile node could return.
 describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
   it('maps owned Blob objects (flat gRPC json shape) to OwnedBlob entries', async () => {
     const walrusClient = makeWalrusClient()
@@ -49,6 +55,7 @@ describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
   it('lists a blob whose id is a real u256 (up to 78 digits), not only small test ids', async () => {
     // A blob id is a 32-byte value shown as a decimal u256. Capping every integer field at u64's 20 digits
     // dropped every real blob (the owned-blob list was empty on a live network).
+    // (the two ids below are the real shape: a 32-byte value written as a decimal number)
     const realId = ((1n << 255n) + 123456789n).toString() // 77 digits
     const maxId = ((1n << 256n) - 1n).toString() // 78 digits
     expect(realId.length).toBe(77)
@@ -65,6 +72,7 @@ describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
     expect(blobs[0]!.blobId).toBe(`blobid-${realId}`)
   })
 
+  // A single page silently truncates a large wallet; every page must be read, continuing from each cursor.
   it('pages through every owned blob with the cursor', async () => {
     const blob = (id: string) => ({
       objectId: id,
@@ -81,6 +89,7 @@ describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
     expect(listOwnedObjects).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'c1' }))
   })
 
+  // The old JSON-RPC rendering nested the fields; both shapes must parse so a transport change does not empty the list.
   it('tolerates the nested `.fields` shape (transport robustness)', async () => {
     const { client } = makeSuiClient([
       {
@@ -128,6 +137,7 @@ describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
     expect(blob).toMatchObject({ size: 1048576, startEpoch: 204, endEpoch: 205, certified: true, deletable: true })
   })
 
+  // Listing a blob with a guessed flag could offer a person a delete they cannot perform (or hide one they can): skip instead.
   it('never invents deletability: a blob whose deletable flag is missing or not a boolean is skipped', async () => {
     const entry = (objectId: string, deletable: unknown) => ({
       objectId,
@@ -148,6 +158,7 @@ describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
     expect(await fetchOwnedWalrusBlobs(client, makeWalrusClient(), '0xowner')).toEqual([])
   })
 
+  // The node filtered by type already; checking again keeps a look-alike struct out even if the filter is ever loosened.
   it('skips objects that are not exactly the Blob type, comparing normalised types', async () => {
     const { client } = makeSuiClient([
       { objectId: '0xa', type: '0xevil::blob::Blob', json: { blob_id: '7', size: '1', storage: { start_epoch: 1, end_epoch: '5' } } },
@@ -158,6 +169,7 @@ describe('fetchOwnedWalrusBlobs (gRPC core API)', () => {
     expect(blobs.map((b) => b.objectId)).toEqual(['0xc'])
   })
 
+  // A node that always reports another page must not hang the caller or return a list that only looks complete.
   it('throws instead of paging forever', async () => {
     const listOwnedObjects = vi.fn().mockResolvedValue({ objects: [], hasNextPage: true, cursor: 'again' })
     const client = { core: { listOwnedObjects } } as any

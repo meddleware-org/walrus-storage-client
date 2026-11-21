@@ -1,3 +1,8 @@
+/**
+ * Tests for `createWalrusClient` and `relayAuthFetch` (`src/client.ts`): the upload relay is wired by default and can be disabled or replaced, the access token reaches the relay
+ * only through the `fetch` hook (the SDK has no headers option) and only on the relay's own origin, a token provider is read per request, a non-https relay is refused, the tip cap
+ * is validated, and a localnet needs explicit settings. The SDK extension is captured, so no network client is built.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Capture the options passed to the walrus() extension so we can assert the
@@ -24,10 +29,12 @@ vi.mock('@mysten/sui/grpc', () => ({
 
 import { createWalrusClient, relayAuthFetch } from '../src/client.js'
 
+// Each test sees only the arguments of its own `createWalrusClient` call.
 beforeEach(() => {
   walrusArgs.length = 0
 })
 
+// Which relay the client uses, whether it can be switched off, and how the token reaches it.
 describe('createWalrusClient upload-relay wiring', () => {
   it('defaults to the public Mysten relay fallback when no host given', () => {
     createWalrusClient({ network: 'testnet' })
@@ -111,6 +118,7 @@ describe('createWalrusClient upload-relay wiring', () => {
     }
   })
 
+  // Without a token there is nothing to inject, so the SDK's own `fetch` is left alone.
   it('adds no relay fetch hook when no token is supplied', () => {
     createWalrusClient({ network: 'testnet' })
     expect(walrusArgs[0].uploadRelay.fetch).toBeUndefined()
@@ -197,6 +205,7 @@ describe('createWalrusClient upload-relay wiring', () => {
   })
 })
 
+// The cap bounds what a hostile relay can charge, so a value that would disable it (NaN, zero, a fraction) must fail at creation.
 describe('relay tip cap validation', () => {
   it('rejects NaN, zero, negatives, fractions and unsafe integers', () => {
     for (const cap of [Number.NaN, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 2, Infinity]) {
@@ -206,7 +215,9 @@ describe('relay tip cap validation', () => {
   })
 })
 
+// A localnet has no bundled defaults: the caller supplies the RPC URL and the Walrus package config, and plain-http storage nodes are allowed only there.
 describe('createWalrusClient localnet targeting', () => {
+  // Placeholder package ids: nothing here reads a chain.
   const pkgConfig = { systemObjectId: '0xsys', stakingPoolId: '0xstake', exchangeIds: [] }
 
   it("throws when network is 'localnet' without an explicit rpcUrl", () => {

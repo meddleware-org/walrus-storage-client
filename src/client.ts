@@ -1,8 +1,19 @@
+/**
+ * @file The Walrus client factory, the per-network defaults and the relay-aware `fetch`.
+ *
+ * Role: one place that decides how a client reaches Sui, the Walrus storage nodes and an upload relay, and enforces the rules that protect a person's data and tokens:
+ * a relay must be https (loopback excepted), a tip is capped, and an access token is sent only to the relay's own origin and never follows a redirect. No package
+ * address is hard-coded here (the SDK bundles the testnet and mainnet configs; a localnet's is supplied by the caller).
+ *
+ * Main exports: `createWalrusClient`, `relayAuthFetch`, `walrusBlobUrl`, the default host tables and `DEFAULT_UPLOAD_RELAY_MAX_TIP_MIST`. Tested in `tests/client.test.ts`.
+ */
+// The Sui gRPC client the Walrus extension is added to, and the Walrus extension with its bundled per-network package configs.
 import { SuiGrpcClient } from '@mysten/sui/grpc'
 import { walrus, TESTNET_WALRUS_PACKAGE_CONFIG, MAINNET_WALRUS_PACKAGE_CONFIG } from '@mysten/walrus'
 import { assertTipCapMist } from './limits.js'
 import type { WalrusPackageConfig } from '@mysten/walrus'
 
+// Re-exported so a consumer can read the bundled ids (for display or a drift check) without a second import.
 export { TESTNET_WALRUS_PACKAGE_CONFIG, MAINNET_WALRUS_PACKAGE_CONFIG }
 export type { WalrusPackageConfig }
 
@@ -47,12 +58,14 @@ export function walrusBlobUrl(
   blobId: string,
   aggregatorHost?: string,
 ): string {
+  // A caller who runs their own aggregator passes it; otherwise the public one. The blob id is URL-encoded: it is base64url and may contain `-` and `_` only, but encoding is the safe default.
   const host = aggregatorHost ?? WALRUS_AGGREGATOR_HOSTS[network]
   return `${host}/v1/blobs/${encodeURIComponent(blobId)}`
 }
 
 /** Return the Walrus on-chain package config for the given network. */
 export function getWalrusPackageConfig(network: WalrusNetwork) {
+  // Anything that is not mainnet is the testnet config (the type allows only those two).
   return network === 'mainnet' ? MAINNET_WALRUS_PACKAGE_CONFIG : TESTNET_WALRUS_PACKAGE_CONFIG
 }
 
@@ -126,6 +139,7 @@ export function createWalrusClient({
   uploadRelayMaxTipMist = DEFAULT_UPLOAD_RELAY_MAX_TIP_MIST,
   disableUploadRelay = false,
 }: CreateWalrusClientOptions = {}) {
+  // Validate the tip cap first: a zero, negative or fractional cap would make the SDK refuse every relay or accept any tip.
   assertTipCapMist(uploadRelayMaxTipMist)
   // localnet has no bundled RPC/relay default — the caller must supply rpcUrl (and, for uploads,
   // uploadRelayHost). Fall back to the public defaults only for the two bundled networks.
@@ -135,6 +149,7 @@ export function createWalrusClient({
   // disableUploadRelay wins over both an explicit host and the default fallback.
   const defaultRelay = bundled ? PUBLIC_UPLOAD_RELAY_HOSTS[bundled] : undefined
   const relayHost = disableUploadRelay ? undefined : (uploadRelayHost ?? defaultRelay)
+  // The relay receives the blob and the signed tip transaction, so it must be https whether or not a token is configured.
   if (relayHost) assertSecureRelayHost(relayHost)
   // Plain-http storage nodes exist only on a local testbed.
   if (storageNodeUrlScheme === 'http' && network !== 'localnet') {
@@ -145,6 +160,7 @@ export function createWalrusClient({
   // client 'testnet' — harmless, since the real contract ids come from walrusPackageConfig and the RPC
   // endpoint from baseUrl; the label is never used for resolution when packageConfig is supplied.
   const suiNetwork: WalrusNetwork = bundled ?? 'testnet'
+  // The gRPC client, extended with the Walrus capabilities (`client.walrus`).
   return new SuiGrpcClient({
     network: suiNetwork,
     baseUrl,
@@ -196,13 +212,18 @@ export function relayAuthFetch(
   relayHost: string,
   token: string | (() => string | undefined),
 ): (url: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
+  // Only requests to this origin get the token.
   const relayOrigin = new URL(relayHost).origin
   return (url, init) => {
+    // `fetch` accepts a string, a URL or a Request; normalise to a URL to compare origins, keeping the Request for its headers.
     const request = url instanceof Request ? url : undefined
     const href = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url
     const target = new URL(href)
+    // A provider is read now, per request, so a resumed flow presents a fresh proof.
     const value = typeof token === 'function' ? token() : token
+    // No token, or another origin (a storage node, say): pass through untouched. The header is never added to a third party's request.
     if (!value || target.origin !== relayOrigin) return globalThis.fetch(url, init)
+    // A token over plain http would cross the network in the clear: refuse (the relay host is checked at creation, this guards a later redirect-like URL).
     if (target.protocol !== 'https:' && !isLoopbackHost(target.hostname)) {
       throw new Error(`walrus-storage-client: refusing to send auth token over non-https URL (${href})`)
     }
@@ -218,6 +239,7 @@ export function relayAuthFetch(
 
 /** True for a hostname that only this machine can reach (the one place plain http is acceptable). */
 function isLoopbackHost(hostname: string): boolean {
+  // The three spellings of this machine.
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
@@ -228,6 +250,7 @@ function isLoopbackHost(hostname: string): boolean {
  */
 function assertSecureRelayHost(relayHost: string): void {
   let url: URL
+  // A string that does not parse is a configuration error; the message does not echo it (it could carry credentials).
   try {
     url = new URL(relayHost)
   } catch {

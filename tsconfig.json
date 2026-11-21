@@ -1,18 +1,32 @@
+// TypeScript settings for editing, type-checking (`npm run type-check`) and the tests. It covers src/, tests/ AND the integration config, so a type error in any of them fails CI.
+// The published declarations are built from the narrower tsconfig.build.json, which extends this file.
 {
   "compilerOptions": {
+    // The newest syntax and library: the code is shipped as TypeScript source and compiled by the consuming app's bundler, which targets its own browsers.
     "target": "esnext",
+    // `DOM` is needed for `fetch`, `Response`, `Headers`, `AbortSignal` and `TextEncoder`, which the HTTP helpers and the relay fetch use (Node 24+ and every browser have them).
     "lib": ["esnext", "DOM"],
     "module": "esnext",
+    // Resolution as a bundler does it, so the `.js` import specifiers in the source resolve to the `.ts` files.
     "moduleResolution": "Bundler",
+    // The tests import `package.json` and `vectors`-style JSON files.
     "resolveJsonModule": true,
+    // Every file must be compilable on its own (what esbuild and Vite do), so no `const enum` or type-only re-export without `type`.
     "isolatedModules": true,
     "allowSyntheticDefaultImports": true,
+    // The same file name with a different case is a different file on some systems; refuse the mix.
     "forceConsistentCasingInFileNames": true,
+    // The strict family: null checks, no implicit any, and the rest.
     "strict": true,
+    // An index access may be undefined: array and record lookups must be checked.
     "noUncheckedIndexedAccess": true,
+    // Do not type-check the dependencies' declaration files (they are the SDK's business).
     "skipLibCheck": true,
+    // Type-check only; the build config turns emission on for declarations.
     "noEmit": true,
+    // Node's types for the tests and `node.ts` (`node:fs`, `Buffer`); nothing else is ambient.
     "types": ["node"]
   },
+  // The source, the tests (the integration tests included) and the one config file that imports from them.
   "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.integration.config.ts"]
 }

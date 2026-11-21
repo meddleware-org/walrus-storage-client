@@ -1,5 +1,9 @@
 // Unit tests for the headless upload orchestrator and its resume conventions. A fake root module is
 // injected via `loadWalrusClient`, so no wasm, wallet or network is touched.
+//
+// Why this is the biggest suite: the flow spends a person's money (storage, a pass use) in steps that cannot be replayed, so most of what it promises is "what happens when a
+// step fails": the retries are bounded and stay on the same paid registration, a consume is never spent twice, a certify failure never repeats the upload, and nothing
+// is stored in the browser beyond what a resume needs. Time, storage, the wallet and the SDK are all doubles.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { GATEWAY_CONFLICT_CODES, decodeAccessProof } from '@meddleware/access-gate-gateway-client'
 import { StorageNodeAPIError } from '@mysten/walrus'
@@ -36,6 +40,7 @@ function conflict(code: string): StorageNodeAPIError {
   return StorageNodeAPIError.generate(409, { error: `consume ${code}`, code }, undefined)
 }
 
+/** An in-memory `StorageLike` (optionally pre-seeded) that also exposes its map, so a test can see exactly what was written or left behind. */
 function fakeStorage(seed: Record<string, string> = {}): StorageLike & { map: Map<string, string> } {
   const map = new Map<string, string>(Object.entries(seed))
   return {
@@ -46,7 +51,9 @@ function fakeStorage(seed: Record<string, string> = {}): StorageLike & { map: Ma
   }
 }
 
+/** A fake of the lazily loaded package root: the SDK flow records each step in `steps`, and the register and certify transactions are spies. */
 function makeModule() {
+  // The order the flow's steps were called in.
   const steps: string[] = []
   const regTx = { setSenderIfNotSet: vi.fn(), build: vi.fn(async () => {}) }
   const certTx = { setSenderIfNotSet: vi.fn(), build: vi.fn(async () => {}) }
@@ -77,6 +84,7 @@ function makeModule() {
   return { mod, flow, regTx, certTx, steps }
 }
 
+/** A wallet double: every transaction "executes" with a distinct digest, so a test can tell which one an upload was bound to. */
 function makeExecutor() {
   return {
     signAndExecute: vi.fn(async (_tx: unknown) => ({ digest: `dig-${Math.random().toString(16).slice(2)}` })),
@@ -84,11 +92,13 @@ function makeExecutor() {
   }
 }
 
+// A gate id and two valid-looking transaction digests (the second differs from the first, to tell "the stored one" from "a new one"); a sleep that returns at once.
 const GATE = '0x' + 'a1'.repeat(32)
 const DIGEST = '5Wq9tE4gXz8hEvFhYt8KkTJb2Pp6qXqj8cRk3xN1mYdL'
 const DIGEST2 = '3ucNSQzgjYgSNxS9cM3ZHSc3zLyLEWd9mT4pYiiyqKQ4'
 const noSleep = async () => {}
 
+/** The dependencies every `runBlobUpload` test shares; each test adds an executor and the module double. */
 const baseDeps = {
   sleep: noSleep,
   bytes: new Uint8Array([1, 2, 3]),
@@ -102,6 +112,7 @@ const baseDeps = {
   onStatus: () => {},
 }
 
+/** The error a promise rejects with (fails the test if it resolves), so assertions can inspect the thrown object. */
 async function rejection(p: Promise<unknown>): Promise<unknown> {
   try {
     await p
@@ -125,6 +136,7 @@ describe('runBlobUpload', () => {
     expect(progress.every((p) => typeof p.detail === 'string' && p.detail.length > 0)).toBe(true)
   })
 
+  // Permanent is the default because pointers and manifests rely on the blob staying readable; deletable must be an explicit choice.
   it('registers permanent by default and deletable when chosen', async () => {
     for (const [deletable, expected] of [[undefined, false], [true, true]] as const) {
       const { mod, flow } = makeModule()
@@ -134,12 +146,14 @@ describe('runBlobUpload', () => {
     }
   })
 
+  // The duration the person chose is what is registered, not a default.
   it('passes the chosen epochs to register', async () => {
     const { mod, flow } = makeModule()
     await runBlobUpload({ ...baseDeps, epochs: 20, executor: makeExecutor(), loadWalrusClient: async () => mod })
     expect(flow.register).toHaveBeenCalledWith({ owner: '0xabc', epochs: 20, deletable: false })
   })
 
+  // A register transaction embeds a per-encode nonce and the relay's tip, so a stale one is rejected as "too old": it is never resumed across attempts.
   it('always registers fresh and uploads with this attempt\'s register digest', async () => {
     const { mod, flow } = makeModule()
     const executor = makeExecutor()
@@ -149,6 +163,7 @@ describe('runBlobUpload', () => {
     expect(flow.upload).toHaveBeenCalledWith({ digest: regDigest, deletable: false })
   })
 
+  // Paying to store the same bytes twice is the avoidable cost; the precheck turns it into an offer to extend or certify the copy the person already owns.
   it('aborts before registering when an existing certified copy is found (offers Extend)', async () => {
     const { mod, flow } = makeModule()
     const findExistingCopy = vi.fn(async () => ({ kind: 'certified' as const, blobId: 'BLOB123', objectId: 'OBJ_EXISTING', endEpoch: 570 }))
@@ -158,6 +173,7 @@ describe('runBlobUpload', () => {
     expect(flow.register).not.toHaveBeenCalled()
   })
 
+  // An upload that was registered and sent but never certified is not lost: the person is offered "certify" for the copy they already paid for.
   it('surfaces a pending existing copy (offers Certify)', async () => {
     const { mod } = makeModule()
     const findExistingCopy = vi.fn(async () => ({ kind: 'pending' as const, blobId: 'BLOB123', objectId: 'OBJ_PENDING', endEpoch: 560 }))
@@ -165,6 +181,7 @@ describe('runBlobUpload', () => {
     expect(getDuplicateExisting(thrown)?.kind).toBe('pending')
   })
 
+  // The person may deliberately want another copy; the precheck must not stop them.
   it('force bypasses the existing-copy check', async () => {
     const { mod, flow } = makeModule()
     const findExistingCopy = vi.fn(async () => ({ kind: 'certified' as const, blobId: 'BLOB123', objectId: 'OBJ', endEpoch: 570 }))
@@ -173,6 +190,7 @@ describe('runBlobUpload', () => {
     expect(flow.register).toHaveBeenCalledTimes(1)
   })
 
+  // The certificate is kept between upload and certify so a closed tab can finish a paid upload, and removed when it is no longer needed.
   it('persists the certificate on upload and clears it on certify', async () => {
     const { mod } = makeModule()
     const onUploaded = vi.fn()
@@ -182,6 +200,7 @@ describe('runBlobUpload', () => {
     expect(onCertified).toHaveBeenCalledWith('OBJ123')
   })
 
+  // Register and upload are paid and cannot be replayed; only certify may be retried, from the certificate the live flow still holds.
   it('on a certify failure, throws with a retry that certifies without re-uploading', async () => {
     const { mod, flow } = makeModule()
     let calls = 0
@@ -202,6 +221,7 @@ describe('runBlobUpload', () => {
     expect(flow.upload).toHaveBeenCalledTimes(1)
   })
 
+  // The SDK builds the transactions without a sender; the wallet needs one to sign, so the flow sets it on both.
   it('sets the sender on both the register and certify transactions', async () => {
     const { mod, regTx, certTx } = makeModule()
     await runBlobUpload({ ...baseDeps, executor: makeExecutor(), loadWalrusClient: async () => mod })
@@ -209,12 +229,14 @@ describe('runBlobUpload', () => {
     expect(certTx.setSenderIfNotSet).toHaveBeenCalledWith('0xabc')
   })
 
+  // The flow only passes through what the app configured; an unset RPC endpoint must not appear as an empty string.
   it('forwards an RPC endpoint when given', async () => {
     const { mod } = makeModule()
     await runBlobUpload({ ...baseDeps, rpcUrl: 'https://rpc.example', executor: makeExecutor(), loadWalrusClient: async () => mod })
     expect(mod.createWalrusClient.mock.calls[0]![0]).toMatchObject({ rpcUrl: 'https://rpc.example' })
   })
 
+  // An open relay needs no token; sending an empty provider would add a header nobody asked for.
   it('forwards relay host, tip cap and wasm url, and no auth for an open relay', async () => {
     const { mod } = makeModule()
     await runBlobUpload({ ...baseDeps, executor: makeExecutor(), loadWalrusClient: async () => mod })
@@ -224,7 +246,10 @@ describe('runBlobUpload', () => {
   })
 })
 
+// With a gated relay the order matters: the consume is spent and stored BEFORE register, the signed token is minted AFTER it (a challenge lives minutes), and every retry
+// stays on the same paid registration while it is fresh.
 describe('runBlobUpload with gated access', () => {
+  /** A `GatedAccess` double that hands out the given tokens in order and records its calls. */
   function access(tokens: string[]) {
     let i = 0
     return {
@@ -234,9 +259,11 @@ describe('runBlobUpload with gated access', () => {
       uploaded: vi.fn(() => {}),
     } satisfies GatedAccess
   }
+  /** The token provider the flow gave the (fake) client, which the relay would call per request. */
   const providerOf = (mod: ReturnType<typeof makeModule>['mod']) =>
     (mod.createWalrusClient.mock.calls[0]![0] as { uploadRelayAuthToken: () => string }).uploadRelayAuthToken
 
+  // Order matters: the consume is persisted first (resumable), the token is minted after register (a challenge outlives neither a slow approval nor a retry).
   it('spends the consume before register, mints the token AFTER register, and threads it into the relay', async () => {
     const { mod, steps } = makeModule()
     const gate = access(['tok-1'])
@@ -253,6 +280,7 @@ describe('runBlobUpload with gated access', () => {
     expect(gate.uploaded).toHaveBeenCalledTimes(1)
   })
 
+  // A 409 `redeemed` means the stored consume already paid for an earlier upload; only then is a new use spent, and the paid registration is reused.
   it('after a redeemed conflict, spends a new use and retries on the same registration', async () => {
     const { mod, flow } = makeModule()
     flow.upload.mockRejectedValueOnce(conflict('redeemed'))
@@ -265,6 +293,7 @@ describe('runBlobUpload with gated access', () => {
     expect(providerOf(mod)()).toBe('tok-2')
   })
 
+  // A transient failure must cost nothing extra: no second registration and no second pass use, only a fresh signed token.
   it('a relay 5xx or a network error retries on the same registration with a fresh token, no new consume', async () => {
     for (const failure of [Object.assign(new Error('relay 503'), { status: 503 }), new Error('network down')]) {
       const { mod, flow } = makeModule()
@@ -278,6 +307,7 @@ describe('runBlobUpload with gated access', () => {
     }
   })
 
+  // A challenge lives minutes; a slow approval can outlive it, which the gateway reports as a stale proof. The answer is a fresh signature, not a new registration.
   it('an expired-challenge rejection retries on the same registration with a fresh token', async () => {
     const { mod, flow } = makeModule()
     flow.upload.mockRejectedValueOnce(Object.assign(new Error('relay 403: challenge nonce invalid, expired, or already used'), { status: 403 }))
@@ -287,6 +317,7 @@ describe('runBlobUpload with gated access', () => {
     expect(gate.token).toHaveBeenCalledTimes(2)
   })
 
+  // A stored consume the gateway no longer accepts is dropped and replaced once; a second rejection must not loop and spend a use each time.
   it('a rejected RESUMED consume is dropped and consumed anew, once', async () => {
     const { mod, flow } = makeModule()
     const rejected = Object.assign(new Error('relay 403: no matching single-use consume for this address'), { status: 403 })
@@ -299,6 +330,7 @@ describe('runBlobUpload with gated access', () => {
     expect(gate.token).toHaveBeenCalledTimes(2)
   })
 
+  // A 4xx that is not about the proof will not change on a retry, so retrying would only delay the person's answer.
   it('does not retry a rejection that is not about the proof (e.g. 400, 403 not an owner)', async () => {
     for (const failure of [Object.assign(new Error('relay 400 bad request'), { status: 400 }), Object.assign(new Error('relay 403 address does not hold the required access NFT'), { status: 403 })]) {
       const { mod, flow } = makeModule()
@@ -310,6 +342,7 @@ describe('runBlobUpload with gated access', () => {
     }
   })
 
+  // After the attempts run out the person is not left with a paid registration and no way forward: the error carries a retry on the same registration.
   it('bounds the retries and hands the caller an uploadRetry on the same registration', async () => {
     const { mod, flow } = makeModule()
     flow.upload.mockRejectedValue(Object.assign(new Error('relay 502'), { status: 502 }))
@@ -328,6 +361,7 @@ describe('runBlobUpload with gated access', () => {
     expect(executor.signAndExecute).toHaveBeenCalledTimes(2) // register once, certify once
   })
 
+  // The relay rejects a stale registration as "too old"; retrying it would only waste time, so the flow gives up and says so.
   it('does not retry once the registration is too old for the relay', async () => {
     const { mod, flow } = makeModule()
     let clock = 1_000_000
@@ -340,6 +374,7 @@ describe('runBlobUpload with gated access', () => {
     expect(getUploadRetry(err)).toBeNull()
   })
 
+  // The retry logic is not specific to gated relays: a transient failure on an open relay also keeps the paid registration.
   it('an open relay also retries transient failures on the same registration', async () => {
     const { mod, flow } = makeModule()
     flow.upload.mockRejectedValueOnce(Object.assign(new Error('relay 503'), { status: 503 }))
@@ -349,6 +384,7 @@ describe('runBlobUpload with gated access', () => {
     expect(executor.signAndExecute).toHaveBeenCalledTimes(2)
   })
 
+  // An out-of-range duration aborts on-chain after the person has approved and paid gas; the check must come first.
   it('rejects invalid epochs before any wallet prompt', async () => {
     const { mod } = makeModule()
     const executor = makeExecutor()
@@ -358,6 +394,7 @@ describe('runBlobUpload with gated access', () => {
     expect(executor.signAndExecute).not.toHaveBeenCalled()
   })
 
+  // Once the relay has the bytes the consume is redeemed; a later certify failure must not leave a stored digest that would be offered again.
   it('marks access spent once the upload lands, even if certify then fails', async () => {
     const { mod } = makeModule()
     let calls = 0
@@ -377,8 +414,12 @@ describe('runBlobUpload with gated access', () => {
   })
 })
 
+// The real access object against doubles: a consume bound to the challenge nonce is persisted before signing, a stored digest is reused only when well-formed, for this
+// pass and recent, and an unlimited pass never consumes.
 describe('createGatedAccess', () => {
+  // A fixed "now", so ages are exact.
   const NOW = 1_800_000_000_000
+  /** The ports of a gated access: a spy for every wallet and chain call, a fixed challenge and the fixed clock. */
   function ports(storage: StorageLike, singleUse = true) {
     return {
       storage,
@@ -397,6 +438,7 @@ describe('createGatedAccess', () => {
       now: () => NOW,
     }
   }
+  /** A stored consume record (valid unless `over` breaks a field). */
   const stored = (over: Record<string, unknown> = {}) => JSON.stringify({ digest: DIGEST2, nftId: '0xnft', savedAt: NOW - 1000, ...over })
 
   it('consumes a use bound to the challenge nonce and persists {digest, nftId, savedAt} before signing', async () => {
@@ -430,6 +472,7 @@ describe('createGatedAccess', () => {
     )
   })
 
+  // The point of persisting the digest: an interrupted upload resumes with a fresh signature but no second use.
   it('reuses a valid stored digest without consuming another use', async () => {
     const p = ports(fakeStorage({ k: stored() }))
     const gate = createGatedAccess(p)
@@ -439,6 +482,7 @@ describe('createGatedAccess', () => {
     expect(decodeAccessProof(token).consumeDigest).toBe(DIGEST2)
   })
 
+  // Browser storage is untrusted: a value that is not exactly a recent consume of THIS pass is never presented to the gateway.
   it('drops a stored value that is malformed, for another pass, stale, or from the future, and consumes anew', async () => {
     for (const bad of [
       'plain-old-digest-string',
@@ -466,6 +510,7 @@ describe('createGatedAccess', () => {
     expect(decodeAccessProof(token).consumeDigest).toBe(DIGEST)
   })
 
+  // Storing a bad digest would make every resume fail; the access step refuses it and stores nothing.
   it('refuses a consume result without a valid digest instead of storing it', async () => {
     const storage = fakeStorage()
     const p = ports(storage)
@@ -476,6 +521,7 @@ describe('createGatedAccess', () => {
     }
   })
 
+  // An unlimited pass has no uses to spend: only a signature is needed, and nothing is stored.
   it('an unlimited pass only signs', async () => {
     const p = ports(fakeStorage(), false)
     const gate = createGatedAccess(p)
@@ -491,6 +537,7 @@ describe('createGatedAccess', () => {
     expect(storage.getItem('k')).toBeNull()
   })
 
+  // The gateway re-reads the consume with its own retry; a slow node here must not abort an upload that would have worked.
   it('does not block on an indexing delay after the consume', async () => {
     const p = ports(fakeStorage())
     p.waitForTransaction.mockRejectedValueOnce(new Error('not indexed yet'))
@@ -498,7 +545,9 @@ describe('createGatedAccess', () => {
   })
 })
 
+// The flow reacts to errors by what they say structurally (a status, a code in the gateway's JSON), not by message text, except where the SDK gives nothing else.
 describe('upload error classification', () => {
+  // The SDK reports a status in different places depending on the failure (a field, the message text, a wrapped cause), so all three are read.
   it('reads an HTTP status from the error, its message or its cause', () => {
     expect(httpStatusOf({ status: 503 })).toBe(503)
     expect(httpStatusOf(new Error('relay responded 429 slow down'))).toBe(429)
@@ -507,6 +556,7 @@ describe('upload error classification', () => {
     expect(httpStatusOf(null)).toBeNull()
   })
 
+  // Each helper pairs a status with wording from the gateway's contract, so an unrelated 403 is not mistaken for a stale proof or a rejected consume.
   it('names the gateway rejections the flow reacts to', () => {
     expect(isConsumeRejected(Object.assign(new Error('403 no matching single-use consume for this address'), { status: 403 }))).toBe(true)
     expect(isConsumeRejected(new Error('403 address does not hold the required access NFT'))).toBe(false)
@@ -528,6 +578,7 @@ describe('isRedeemedConflict', () => {
     expect(gatewayConflictCodeOf(conflict('leased'))).toBe('leased')
   })
 
+  // The conflict codes come from the protocol package; if it gains one, this client must be reviewed before it acts on it.
   it('knows exactly the codes access-gate-gateway-client exports', () => {
     for (const code of GATEWAY_CONFLICT_CODES) expect(gatewayConflictCodeOf(conflict(code))).toBe(code)
     expect(gatewayConflictCodeOf(StorageNodeAPIError.generate(409, { error: 'x', code: 'invented' }, undefined))).toBeNull()
@@ -555,6 +606,7 @@ describe('isRedeemedConflict', () => {
   })
 })
 
+// Browser storage is untrusted: entries are size-capped, copied field by field, and dropped if they do not match their key. Only what a resume needs is kept (STORAGE_LEDGER B5, B6).
 describe('persistence keys and pending certifications', () => {
   it('keys are namespaced', () => {
     expect(consumeStorageKey('testnet', '0xgate', '0xaddr')).toBe('mw:walrus:consume:testnet:0xgate:0xaddr')
@@ -563,6 +615,7 @@ describe('persistence keys and pending certifications', () => {
 
   const entry = { blobId: 'BLOB1', blobObjectId: 'OBJ1', certificate: 'CERT_B64', deletable: false }
 
+  // The round trip of what a closed tab needs to finish a paid upload: save when uploaded, load after a reload, clear when certified.
   it('saves, loads and clears a pending certification', () => {
     const storage = fakeStorage()
     const key = pendingCertifyKey('testnet', '0xabc')
@@ -574,6 +627,7 @@ describe('persistence keys and pending certifications', () => {
     expect(storage.getItem(key)).toBeNull()
   })
 
+  // Several uploads can be pending at once; finishing one must not forget the others.
   it('keeps other entries when clearing one', () => {
     const storage = fakeStorage()
     const key = pendingCertifyKey('testnet', '0xabc')
@@ -612,6 +666,7 @@ describe('persistence keys and pending certifications', () => {
   })
 })
 
+// Storage can be missing or throw (blocked site data, some private modes): the flow then keeps values in memory and nothing breaks, it just cannot resume after a reload.
 describe('browserStorage', () => {
   afterEach(() => vi.unstubAllGlobals())
 
@@ -646,6 +701,7 @@ describe('browserStorage', () => {
 })
 
 describe('forgetExpiredConsumes (STORAGE_LEDGER B5)', () => {
+  /** A storage double that can be enumerated (the sweep needs `length` and `key`). */
   const enumerable = (entries: Record<string, string>) => {
     const map = new Map(Object.entries(entries))
     return {
@@ -675,6 +731,7 @@ describe('forgetExpiredConsumes (STORAGE_LEDGER B5)', () => {
     expect([...s.map.keys()].sort()).toEqual(['mw-color-mode', 'mw:walrus:consume:testnet:g1:a', 'mw:walrus:pendingCertify:testnet:a'])
   })
 
+  // The sweep is part of opening storage, so an abandoned upload's record does not outlive its usefulness on the device.
   it('runs when browserStorage is created', () => {
     const s = enumerable({ 'mw:walrus:consume:testnet:g:a': JSON.stringify({ digest: 'd', nftId: 'n', savedAt: 0 }) })
     vi.stubGlobal('window', { localStorage: s })

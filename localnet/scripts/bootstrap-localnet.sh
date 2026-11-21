@@ -257,6 +257,8 @@ export LOCAL_TESTBED_NETWORK
 log "starting upload-relay + aggregator (network=${LOCAL_TESTBED_NETWORK:-<unset>})…"
 dock compose -f "${RELAY_COMPOSE}" up -d || warn "gateways failed to start — check their logs."
 
+# Check that a gateway answers, retrying while it starts (connection refused is retried too); a failure is a warning, not fatal, because the suites report a missing relay clearly.
+#   health_check <label> <url>
 health_check() { # <label> <url>
   if curl -fsS -o /dev/null --retry 8 --retry-delay 2 --retry-connrefused "$2" 2>/dev/null; then
     log "$1 reachable"

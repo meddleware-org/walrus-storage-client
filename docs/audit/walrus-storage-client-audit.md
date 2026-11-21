@@ -23,12 +23,20 @@
 - AUDIT_TEMPLATE_OPS.md (2026-10-08) — applied to the localnet harness and the integration workflow
   only. They sign on an ephemeral localnet, never on a real chain.
 
+**Added 2026-11-21 (Part B documentation pass):** AUDIT_TEMPLATE_DOCS.md (2026-11-20); AUDIT_TEMPLATE_RFC.md (2026-11-19), partial: HTTP semantics and the Fetch options of the relay hook and the
+publisher and aggregator helpers, URLs, JSON; AUDIT_TEMPLATE_IOP.md (2026-11-19), partial: the open upload protocols (publisher, aggregator, relay), public API and the dependency list;
+AUDIT_TEMPLATE_PRIV.md (2026-11-20), partial: the two browser-storage records of the flow and what the client sends to the relay, publisher and aggregator.
+
 Not triggered: AUTH (this package issues, verifies and decides nothing: it injects a caller-supplied
 relay token and asks `@meddleware/access-gate-gateway-client` to sign the access proof; the signed-challenge
 design is audited in `access-gate-gateway-client-audit.md`), SEAL (no encryption here), VUE, WORKERS, IMG (no
 container image), PROXY, GO, RUST, SITE, PLATFORM.
 
 **Deployment status:**
+
+- *(Current, 2026-11-21: npm **`0.0.35` is `latest`** (tag `v0.0.35` = `f50ec6a`); one documentation commit since the tag (`8dcf445`, the INTEROP page), nothing under `src/`. The tarball is 25 files,
+  177.8 kB unpacked, 47.5 kB packed (`npm pack --dry-run`). Six packages depend on it, all at `^0.0.35`: `walrus-storage-kit`, `walrus-storage-ui`, `token-issuance-ui`, `sealed-storage-ui`, `docs-site` and
+  `dev-site`. One Dependabot pull request is open (#13, the minor and patch group, 6 updates). The nightly localnet run was green on 2026-11-18, 19, 20 and 21. The entries below are history, kept as written.)*
 
 - **2026-10-22: npm `@meddleware/walrus-storage-client` `latest` is 0.0.30** (tag `v0.0.30` = `ed1257f`). 0.0.29 (tag `v0.0.29` = `9e3d204`, 2026-10-19) lowered `DEFAULT_UPLOAD_RELAY_MAX_TIP_MIST` to 5_000_000 and exported the localnet
   platform-config id; 0.0.30 depends on `@meddleware/access-gate-gateway-client` `^0.0.18` and fixes F26 (the gated flow passed a synthetic challenge expiry of 0, which 0.0.18 refuses). Consumers on `^0.0.30`: walrus-relay 0.1.33, walrus-storage-ui 0.1.61, sealed-storage-ui 0.0.40, token-issuance-ui 0.0.38, the dashboard (0.1.88).
@@ -67,6 +75,8 @@ container image), PROXY, GO, RUST, SITE, PLATFORM.
 - A flaw can double-charge users, burn passes, or leak a proof to another origin.
 - Realised ceiling at the first pass: **Medium** (F7). Realised ceiling now: nothing open above Info
   (F7 and F23 are RESOLVED).
+
+**Documentation pass 2026-11-21 (0.0.35 current):** F30 (an invalid-URL error echoed its input) and F31 (documentation drift) are RESOLVED. The status below is the earlier one.
 
 **Status:** re-verified 2026-10-09 (first in-repo pass 2026-10-03); fix wave applied 2026-10-10 (0.0.28, commit `cdafcd3`), released the same day with a green localnet gate and consumed at `^0.0.28` (2026-10-18).
 
@@ -162,6 +172,19 @@ clients elsewhere. No JSON-RPC.
   - the walrus-deploy admin key read from a Docker volume.
 
 - **Networks targetable:** localnet only.
+
+**Front matter (DOCS, RFC, IOP and PRIV lenses, added 2026-11-21):**
+
+| Field | Value |
+| --- | --- |
+| Documentation status | ledger (workspace `docs/audit/DOCS_LEDGER.tsv`): 59 tracked files, 56 done (55 measured against the thresholds), 3 excluded (the lockfile, `LICENSE`, the generated `docs/INTEROP.md`), 0 pending, 0 fu (2026-11-21 pass) |
+| Required documents | README, CHANGELOG, SECURITY, CONTRIBUTING (added 2026-11-21), LICENSE (0BSD), CLAUDE.md, AGENTS.md: all present |
+| Doc lints | `check-docs.mjs` (workspace) is the gate. The shared `eslint-plugin-jsdoc` fragment is switched on here after the Phase 5 release of `@meddleware/eslint-config` |
+| Standards spoken | Walrus (Mysten Labs): blob registration, certification and storage (through `@mysten/walrus`) and its HTTP publisher and aggregator API — consumes; HTTP semantics (RFC 9110) and Fetch (WHATWG): `redirect: 'error'`, a byte cap, a timeout, and an `Authorization: Bearer` header (RFC 6750) added to the relay's own origin only; URL syntax (RFC 3986) and HTTPS — every endpoint is checked (https only, loopback excepted); JSON (RFC 8259) — the publisher's response, read strictly; Web Storage (WHATWG) — the two flow records; gRPC (`@mysten/sui/grpc`) — consumes; SPDX `0BSD`, Sigstore / SLSA — as the other packages |
+| Deviations | none |
+| Drafts relied on | none. Walrus is a published Mysten protocol, not an IETF or W3C document; the access-proof protocol is Meddleware's own and specified in `access-gate-gateway-client` |
+| Data a person can take away | the blob itself (a Walrus blob is readable by its id from any aggregator, and `fetchOwnedWalrusBlobs` lists an address's blobs); the package keeps nothing |
+| Personal data | none held. The flow keeps two records in the person's own browser, both listed in the workspace's STORAGE_LEDGER (B5 and B6) |
 
 **Location:** `walrus-storage-client/docs/audit/walrus-storage-client-audit.md`. This is a new directory; see the
 finding-IDs note above.
@@ -1007,6 +1030,33 @@ Scope: the changes since the 2026-10-19 review: `0.0.31` rename (ADR-0003), `0.0
 **Where:** `.github/workflows/integration.yml`, `localnet/scripts/lib.sh`, `localnet/testbed.override.yml`, `tests/integration/wal-funding.ts`.
 **Evidence:** the Sui node image is pinned by digest (`mysten/sui-tools:mainnet-v1.82.3@sha256:9dbefdc…`) after the floating `mainnet` tag moved to a gRPC-only node and silently left the test wallet unfunded; the `sui` CLI is installed by a pinned `suiup` release verified by SHA-256, and the binary is verified again; the sibling `access-gate-sui` checkout is a commit SHA; funding is fail-fast with a floor derived from the testbed's storage prices (`wal-funding.test.ts`); the schedule runs on a local chain only (no real funds, base §B.2), and the publish workflow refuses a tag while the latest run is red (`.github/localnet-gate.mjs`).
 
+### Part B documentation pass (2026-11-21)
+
+Scope: every tracked file read against the workspace's `docs/operations/DOCUMENTATION_STANDARD.md` and annotated (Part B Phase 1, the eleventh repository, the fourth of the clients), including the
+localnet shell harness and its configuration; the DOCS, RFC, IOP and PRIV lenses applied for the first time. Before and after editing: `npm ci`, type-check, lint, the 140 unit tests, the declaration build,
+`shellcheck` over the harness and `npm audit --audit-level=high` (exit 0) passed. The diff is comment-only except F30 (one error message and its test), one test title (a stale "v2" renamed "v3") and the
+packaging test (it now strips the comment lines it reads in `tsconfig.build.json`): the TypeScript compiles to identical output with comments removed, the YAML parses to identical values (the shell comments
+inside `run:` blocks aside), `.gitignore` has the same patterns, and the JSON configurations parse alike. The nightly localnet suite was not re-run (nothing it exercises changed in behaviour).
+
+### F30 — `requireHttpsEndpoint` echoed an invalid URL, which can carry a password
+**Severity:** Low   **Disposition:** RESOLVED (2026-11-21, unreleased)
+**Where:** `src/http.ts` (`requireHttpsEndpoint`, used by `storeBlobViaPublisher` and `readBlob`).
+**Issue:** a publisher or aggregator URL that does not parse threw `<what> URL is not valid: <the string>`. A URL with userinfo (`https://user:secret@host`) that is malformed in another way would put the
+password into the error text, which reaches logs and error reporters. The gateway client fixed the same pattern in its F26 (0.0.17); this module had its own copy of the check.
+**Impact:** a secret in a log line, only for a malformed URL that also carried credentials. No credential is required by the supported use (the publisher and aggregator are addressed by plain https URLs).
+**Remediation / evidence:** the message is now `<what> URL is not valid.` and names nothing of the input; `tests/http.test.ts` asserts that two malformed strings carrying a password do not appear in the error. The https
+check still names the origin, which has no userinfo.
+
+### F31 — Documentation drift found by the documentation pass
+**Severity:** Low   **Disposition:** RESOLVED (2026-11-21, unreleased)
+**Where:** this audit, `README.md`, `CLAUDE.md`, `tests/access.test.ts`.
+**Issue:** (1) this audit gave an earlier version as current and five consumers at older ranges; npm has 0.0.35 and six packages at `^0.0.35`; (2) the README had a Testing section with two commands and no
+Development section (no lint, build, audit, shellcheck or localnet commands, no pointer to CONTRIBUTING); (3) CLAUDE.md had a layout and commands paragraph but no Gotchas or Related section, and did not
+mention the committed deployer key, the browser-storage records, the JSONC rule for `tsconfig*.json` or the duplicated `WalrusClient` type and `structFields` reader; (4) there was no `CONTRIBUTING.md`;
+(5) a test was titled "derives the audience-bound v2 message" and asserts the v3 text; (6) the localnet harness's shell functions had no header comments and the testbed's `client.yaml` no comment at all.
+**Impact:** none on the shipped code. A reader could not tell what CI runs or what the localnet harness's key and files are for.
+**Remediation / evidence:** the facts above are checked against npm and the consumers' manifests; the documents are completed; the test title is corrected; the harness is documented function by function.
+
 ### Delta notes
 - **OPS/WALRUS/SC rows:** unchanged; the relay-auth origin and tip-ceiling findings (F-series above) still hold — `access.ts` changed only in its message string and dependency names.
 - **Dependencies:** runtime `@meddleware/access-gate-gateway-client` ^0.0.22; `@types/node` ~26.6.5 (dev).
@@ -1124,6 +1174,56 @@ range on the first-party dependency resolves to exactly `0.0.17`, as the version
 | `npm ci` / audit gates | Node CI, publish and integration (F17, F18) |
 
 ---
+
+### B.DOCS-1 Ledger state
+
+59 tracked files: 56 done (55 measured against the thresholds), 3 excluded (lockfile, licence text, generated `docs/INTEROP.md`), 0 pending, 0 `fu:` rows (2026-11-21, commit recorded in the ledger).
+
+### B.DOCS-2 Commands run
+
+Every command in the README's Development section, CLAUDE.md's Commands section and CONTRIBUTING.md was run on 2026-11-21 and gave what the documents say: `npm ci`, `npm run type-check`, `npm run lint`,
+`npm test` (140 tests), `npm run build`, `npm audit --audit-level=high` (exit 0), `shellcheck` over the harness (exit 0), `bash -n` over its scripts and `npm pack --dry-run` (25 files). The localnet
+suite (`npm run test:integration`) needs Docker and was not run here; its nightly CI run was green on 2026-11-18 to 21.
+
+### B.DOCS-3 Generated documentation
+
+`docs/INTEROP.md` is generated by the workspace's `scripts/interop/gen-interop.py` from `config/interop.yaml`. `dist/*.d.ts` is built by `npm run build` and not tracked. There is no other generated file.
+
+### B.RFC-1 Standards inventory
+
+| Interface | Standard (and version) | Role | Where | Conformance evidence | Deviation |
+| --- | --- | --- | --- | --- | --- |
+| Blob storage | Walrus (Mysten Labs; `@mysten/walrus` `~1.2.32`) | consumes, through the SDK | `src/client.ts`, `src/upload.ts`, `src/manage.ts` | `tests/*.test.ts` (SDK doubled), `tests/relay-auth-sdk.test.ts` (the real relay client), the nightly localnet suite | Walrus is a vendor protocol, not a standard; blobs are readable by id from any aggregator |
+| Relay and aggregator | HTTP semantics (RFC 9110), Fetch (WHATWG) | implements the client side | `relayAuthFetch`, `src/http.ts` | `tests/client.test.ts`, `tests/http.test.ts` (https only, no redirect, byte cap, timeout) | plain http only to a loopback host |
+| Access token | Bearer (RFC 6750) | implements the header, to the relay's origin only | `relayAuthFetch` | `tests/client.test.ts` | the token is the access proof of `access-gate-gateway-client`, not an OAuth token |
+| Publisher response | JSON (RFC 8259) | consumes, strictly | `storeBlobViaPublisher` | `tests/http.test.ts` | — |
+| Endpoints | URL syntax (RFC 3986), HTTPS | checks | `requireHttpsEndpoint`, `assertSecureRelayHost` | `tests/http.test.ts`, `tests/client.test.ts` | — |
+| Resume state | Web Storage (WHATWG) | uses `localStorage` with an in-memory fallback | `browserStorage` in `src/flow.ts` | `tests/flow.test.ts` | — |
+| Node transport | gRPC (`@mysten/sui/grpc`) | consumes | `src/client.ts` | the nightly localnet suite | JSON-RPC is deprecated SDK-wide and is not used |
+| Provenance | Sigstore / SLSA (npm provenance) | consumes | `npm-publish.yml` | `dist.attestations` on npm | — |
+
+### B.IOP-1 Export and exit drill
+
+The person's data is the blob, and it is portable by construction: a Walrus blob is addressed by its content-derived id and readable from any aggregator (`walrusBlobUrl`, or `readBlob` over the HTTP helpers), and
+`fetchOwnedWalrusBlobs` lists what an address owns. The package keeps nothing, so there is nothing to export from it. Leaving means pointing the same calls at another relay, publisher or aggregator (all
+three hosts are options of `createWalrusClient` and the HTTP helpers).
+
+### B.IOP-2 Exit register entries
+
+npm (publication) and GitHub Actions (CI, including the nightly localnet run). The upload relay, publisher and aggregator default to Mysten's public hosts and are replaceable by option; an operator can run their
+own (Meddleware's relay is one). The Sui full node is the caller's choice. The access gate (`access-gate-sui`) is Meddleware's own and open (0BSD).
+
+### B.IOP-3 API stability
+
+The public API is everything exported from `src/index.ts` and the `./flow`, `./http` and `./node` subpaths. Versioning is patch-only until mainnet (workspace policy), so a consumer's `^0.0.x` is an exact pin;
+a rename or removal is a breaking change and is announced in `CHANGELOG.md`. The localnet release gate stops a tag while the nightly suite is red, so a published version has run the real lifecycle.
+
+### B.PRIV-1 / B.PRIV-2 / B.PRIV-3 Privacy inventories
+
+Personal data: none held. Client-side: `./flow` writes two records to the person's own browser, only for an upload they started — the single-use consume digest (`mw:walrus:consume:<network>:<gate>:<address>`,
+`localStorage`, resumable for 4 days, swept) and pending certifications (`mw:walrus:pendingCertify:<network>:<address>`, `localStorage`, until certified) — recorded as strictly necessary (PECR Sch. A1 para 4(e)) in
+STORAGE_LEDGER B5 and B6; where storage is blocked the flow keeps them in memory and nothing breaks. Nothing else is stored, and no cookie is set. Requests: to the relay, publisher, aggregator and Sui node the
+caller names (the access token goes to the relay's origin only and never over plain http or across a redirect); no other host, no analytics, no logging. Recorded 2026-11-21.
 
 ## Section C — Test-coverage & hermetic/live split
 
@@ -1289,6 +1389,21 @@ historical until a maintainer re-runs `vitest --coverage`.
 — done in 0.0.28 (F17), exercised by the green localnet run of 2026-10-10. Mainnet guard and OPS-M7/M8 (no mainnet keys, manual real-chain jobs) — N/A:
 the harness is localnet-only and no real-chain job exists.
 
+**Lens baselines (DOCS, RFC, IOP, PRIV), first recorded 2026-11-21:**
+
+| ID | Holds? | Evidence |
+| --- | --- | --- |
+| DOCS-M1 | yes (all seven documents; 0BSD; CHANGELOG per release with an Unreleased section) | B.DOCS-1 |
+| DOCS-M2 | yes (every file's header and every declaration documented, the shell harness included; ledger rows done) | `check-docs.mjs --report walrus-storage-client` |
+| DOCS-M3 | yes (the entries, the relay and token options, the storage records and the release gate are in the README and CLAUDE.md) | README, CLAUDE.md |
+| DOCS-M4 | yes (commands run, links resolve, ids exist) | B.DOCS-2 |
+| DOCS-M5 | yes (no TODO, FIXME, XXX or HACK) | `check-docs.mjs` |
+| DOCS-M6 | yes (CLAUDE.md verified against the code, F31; AGENTS.md points to it) | this pass |
+| DOCS-M7 | yes, with one recorded exception: `localnet/scripts/lib.sh` commits a public, burned localnet deployer key on purpose (F17); nothing else secret or private | inspection |
+| RFC-M1 to RFC-M7 | yes where they apply (B.RFC-1); M5 is the hosts', not a package's | B.RFC-1 |
+| IOP-M1, IOP-M3, IOP-M5 | yes (B.IOP-1, B.IOP-3; no ads, no tracking); IOP-M2, M4, M6, M7: not applicable (no data held, no service) | B.IOP-1 to 3 |
+| PRIV-M1 to PRIV-M8 | yes: two strictly necessary records, listed in STORAGE_LEDGER, nothing else stored or requested | B.PRIV |
+
 ## Implementation suggestions (SHOULD / MAY)
 
 - **S1** DONE for `uploadRetry` (0.0.26, F7). A persisted `pendingUpload` entry is NOT adopted:
@@ -1439,3 +1554,11 @@ the harness is localnet-only and no real-chain job exists.
 - [x] 2026-10-22 (close-out): F26 added to the summary counts, the findings table, the executive summary and the log; Section D read-integrity box ticked; OQ4 confirmed.
 - 2026-10-24 — repository renamed from `walrus-client` to `walrus-storage-client` (workspace naming convention, `docs/architecture/ADR-0003-naming.md`): package, image, host and path names updated throughout. No finding, disposition or evidence changed.
 - 2026-10-24 — identifier alignment (`docs/architecture/ADR-0004-identifier-alignment.md`): proofs sign `access-gate-gateway:access:v3` through access-gate-gateway-client 0.0.21; 132 tests pass. No finding changed.
+- 2026-11-21 — Part B documentation pass and first application of the DOCS, RFC, IOP and PRIV lenses (above, "Part B documentation pass"). Baseline before editing: `npm ci`, type-check, lint, 140 tests, the
+  declaration build, shellcheck, `npm audit --audit-level=high`. Every tracked file annotated to the documentation standard (headers, doc comments on every declaration and interface member, a reason beside each
+  statement group; the localnet shell functions, compose files and testbed configuration documented); `CONTRIBUTING.md` added; README Development section; CLAUDE.md Commands, Gotchas and Related sections. Found and
+  fixed **F30** (an invalid-URL error echoed its input, which can carry a password; test added) and **F31** (documentation drift). Verified live: npm `0.0.35` latest; six consumers read from their manifests;
+  Dependabot #13 open; the nightly localnet run green on four consecutive days. Re-run after editing: the same commands, all passing; the diff proven comment-only apart from F30, a renamed test title and the
+  packaging test's comment strip. Counts: F1 to F31.
+- [x] 2026-11-21: Template line cites DOCS, RFC, IOP and PRIV with their registry dates; their front-matter fields, Section B subsections and MUST rows added; F30 and F31 recorded in the findings and the
+  log; the deployment status, packaging, test counts and consumers current.

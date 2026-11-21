@@ -1,8 +1,13 @@
+/**
+ * Tests for the localnet WAL funding preflight (`tests/integration/wal-funding.ts`): the amount a test wallet needs is derived from the live price, with margin, and a
+ * short wallet fails the preflight with a clear message instead of an on-chain abort halfway through the suite.
+ */
 import { describe, it, expect } from 'vitest'
 import { assertWalFunded, requiredWal, type StorageCostFn } from './integration/wal-funding.js'
 
 // The testbed's prices: storage 5 FROST/unit/epoch, write 1 FROST/unit (localnet/scripts/lib.sh), one
 // encoded unit for a tiny blob, so 3 epochs cost 5*3 + 1 = 16 — the amount in the 2026-10-22 failure.
+/** A price function with the testbed's numbers: 5 FROST per epoch of storage plus 1 for the write. */
 const cost: StorageCostFn = async (_size, epochs) => {
   const storageCost = 5n * BigInt(epochs)
   return { storageCost, writeCost: 1n, totalCost: storageCost + 1n }

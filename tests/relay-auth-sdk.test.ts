@@ -1,6 +1,7 @@
 // Hermetic proof that the REAL @mysten/walrus UploadRelayClient calls the `fetch` we hand it. The
 // gated relay depends on it: the SDK has no `headers` option, so the Authorization header can only
 // ride on this hook. If an SDK upgrade stops calling it, this test fails instead of production.
+// This is a hermetic test of the real SDK's wiring, not of our code alone: it fails if an upgrade changes the contract the gated relay depends on.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createWalrusClient } from '../src/client.js'
 

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Documentation: every file is annotated line by line and has a header; added `CONTRIBUTING.md`; README Development section; CLAUDE.md Commands, Gotchas and Related; the localnet shell harness and its
+  configuration are documented function by function.
+- `requireHttpsEndpoint` (the `./http` entry) no longer repeats an invalid URL in its error message: a URL may carry a password, and error texts reach logs. The message is now
+  "<what> URL is not valid." (an https check still names the origin, which has no credentials).
+- `tsconfig.json` and `tsconfig.build.json` carry comments; the packaging test strips them before parsing.
+
 ## [0.0.35] - 2026-11-19
 
 ### Added

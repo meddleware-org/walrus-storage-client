@@ -305,6 +305,24 @@ const client = createWalrusClient({ network: 'testnet', disableUploadRelay: true
 
 `uploadRelayHost` must be `https` (plain `http` is accepted only for `localhost`, `127.0.0.1` and `[::1]`), with or without an auth token; `storageNodeUrlScheme: 'http'` is accepted only for the `localnet` network. `disableUploadRelay` overrides both an explicit `uploadRelayHost` and the default fallback. To point at a public Mysten relay instead, use `PUBLIC_UPLOAD_RELAY_HOSTS[network]` as the `uploadRelayHost`.
 
+## Development
+
+The package ships its TypeScript source plus a declaration-only build. The checks, all run in CI on every push (`.github/workflows/node-ci.yml`; the tests also run on Node 24,
+the minimum in `engines`):
+
+```bash
+npm ci                           # install exactly the lockfile
+npm run type-check               # tsc over src/, tests/ and the integration config
+npm run lint                     # eslint (typescript-eslint recommended; localnet/ is not linted)
+npm test                         # 140 offline unit tests (mocked SDK; no wallet, wasm or network)
+npm run build                    # the .d.ts files in dist/
+npm audit --audit-level=high     # the dependency check
+shellcheck -x -P SCRIPTDIR localnet/scripts/*.sh localnet/files/*.sh   # the localnet harness (CI runs it too)
+npm run test:integration         # the localnet suite (Docker; CI runs it nightly): see localnet/README.md
+```
+
+How to propose a change: [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Testing
 
 ```bash

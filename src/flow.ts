@@ -13,6 +13,13 @@
 // gateway error never costs a second paid registration; the thrown error then carries `uploadRetry`.
 // Only the single-use consume digest is resumable across loads: it is a permanent on-chain token,
 // redeemed by the gateway only when an upload succeeds.
+//
+// Role: everything an app needs to upload a raw blob safely, in one place, with the wallet and the chain injected (so it is testable without either): the stepper's
+// progress events; the error conventions that let a generic widget offer "extend the existing copy", "retry the upload" or "retry the certify"; the browser storage that
+// lets a paid, interrupted upload resume (what is stored is listed in the workspace's STORAGE_LEDGER, B5 and B6, and is strictly necessary for the upload the person started);
+// the single-use access flow; and the orchestrator `runBlobUpload`.
+// Main exports: `runBlobUpload`, `createGatedAccess`, `browserStorage`, the `get*`/`is*` error helpers, `consumeStorageKey`, `pendingCertifyKey`. Tested in `tests/flow.test.ts`.
+// What the person is asked: two wallet approvals (register, certify) plus, for a gated relay, the access step.
 import { GATEWAY_STATUS, buildAccessProof, isTransactionDigest, parseGatewayError } from '@meddleware/access-gate-gateway-client'
 import type { GatewayConflictCode, PersonalMessageSigner, SuiNetwork } from '@meddleware/access-gate-gateway-client'
 import type { ClientWithCoreApi } from '@mysten/sui/client'
@@ -26,12 +33,15 @@ export type UploadStepKey = 'access' | 'encode' | 'register' | 'upload' | 'certi
 
 /** Structured progress for a stepper: the phase and a sentence for it. */
 export interface UploadProgress {
+  /** Which phase the upload is in. */
   step: UploadStepKey
+  /** A plain sentence for that phase, ready to show. */
   detail?: string
 }
 
 /** A finished upload. */
 export interface BlobUploadResult {
+  /** The content-addressed blob id. */
   blobId: string
   /** Aggregator URL that serves the raw bytes. */
   url: string
@@ -46,6 +56,7 @@ export interface BlobUploadResult {
 export interface ExistingCopy {
   /** `certified` ⇒ already available (offer Extend); `pending` ⇒ uploaded but not certified (offer Certify). */
   kind: 'certified' | 'pending'
+  /** The blob id of the existing copy (the same content). */
   blobId: string
   /** The on-chain Blob object id of the existing copy. */
   objectId: string
@@ -55,6 +66,7 @@ export interface ExistingCopy {
 
 /** Shape of an error carrying an existing-copy match. */
 export interface DuplicateExistingError {
+  /** The match, attached by `attachDuplicateExisting`. */
   duplicateExisting: ExistingCopy
 }
 
@@ -75,6 +87,7 @@ export function getDuplicateExisting(err: unknown): ExistingCopy | null {
  * certifies from the certificate the live flow still holds.
  */
 export interface CertifyRetryable<R> {
+  /** Certify again from the certificate the live flow holds. */
   certifyRetry: () => Promise<R>
 }
 
@@ -98,11 +111,14 @@ export function getCertifyRetry<R>(err: unknown): (() => Promise<R>) | null {
  */
 export function gatewayConflictCodeOf(err: unknown, depth = 0): GatewayConflictCode | null {
   const e = err as { status?: unknown; error?: unknown; cause?: unknown } | null
+  // Not an object, or a chain deeper than 8 (a cyclic `cause` must not loop).
   if (!e || typeof e !== 'object' || depth > 8) return null
+  // Only a 409 carries a conflict code; the body is parsed by the gateway client, which drops codes it does not know.
   if (e.status === GATEWAY_STATUS.conflict) {
     const code = parseGatewayError(e.error)?.code
     if (code) return code
   }
+  // Otherwise look in the cause (never into itself).
   return e.cause !== undefined && e.cause !== e ? gatewayConflictCodeOf(e.cause, depth + 1) : null
 }
 
@@ -117,6 +133,7 @@ export function isRedeemedConflict(err: unknown): boolean {
 
 /** Shape of an error carrying an upload retry on the same registration. */
 export interface UploadRetryable<R> {
+  /** Upload again on the same registration (and certify). */
   uploadRetry: () => Promise<R>
 }
 
@@ -135,7 +152,9 @@ export function getUploadRetry<R>(err: unknown): (() => Promise<R>) | null {
 export function httpStatusOf(err: unknown, depth = 0): number | null {
   const e = err as { status?: unknown; message?: unknown; cause?: unknown } | null
   if (!e || typeof e !== 'object' || depth > 8) return null
+  // A structured status first.
   if (typeof e.status === 'number' && e.status >= 100 && e.status <= 599) return e.status
+  // Otherwise a 4xx or 5xx number in the message (the SDK puts the status in its text).
   if (typeof e.message === 'string') {
     const m = /\b([45]\d\d)\b/.exec(e.message)
     if (m?.[1]) return Number(m[1])
@@ -143,6 +162,7 @@ export function httpStatusOf(err: unknown, depth = 0): number | null {
   return e.cause !== undefined && e.cause !== e ? httpStatusOf(e.cause, depth + 1) : null
 }
 
+/** The message of an error and of its `cause` chain, joined (depth-limited). */
 function messageOf(err: unknown, depth = 0): string {
   const e = err as { message?: unknown; cause?: unknown } | null
   if (!e || typeof e !== 'object' || depth > 8) return ''
@@ -156,6 +176,7 @@ function messageOf(err: unknown, depth = 0): string {
  * know it). A digest resumed from storage that draws this is dropped and consumed anew.
  */
 export function isConsumeRejected(err: unknown): boolean {
+  // Status AND wording: the 403 has several causes, and only this one means "drop the stored digest and consume anew".
   return httpStatusOf(err) === 403 && /single-use consume/i.test(messageOf(err))
 }
 
@@ -174,8 +195,11 @@ export function isStaleProof(err: unknown): boolean {
 
 /** The subset of the Web Storage API this module needs (injectable for tests). */
 export interface StorageLike {
+  /** The stored string, or `null`. */
   getItem(key: string): string | null
+  /** Store a string (may throw when storage is full or blocked). */
   setItem(key: string, value: string): void
+  /** Remove a key. */
   removeItem(key: string): void
 }
 
@@ -186,11 +210,13 @@ export function consumeStorageKey(network: string, gateId: string, address: stri
 
 /** A stored "uploaded but not yet certified" blob. */
 export interface PendingCertify {
+  /** The blob id. */
   blobId: string
   /** The on-chain Blob object id — the map key and the object being certified. */
   blobObjectId: string
   /** Base64 availability certificate from the upload step (accepted by `certifyBlobTransaction`). */
   certificate: string
+  /** Whether the blob was registered deletable (certify must match). */
   deletable: boolean
   /** Epoch ms the entry was saved. */
   savedAt: number
@@ -203,7 +229,9 @@ export interface PendingCertify {
  * after a reload, but nothing breaks. Pass this, not `window.localStorage`, to the flow helpers.
  */
 export function browserStorage(): StorageLike {
+  // An in-memory copy of everything written, so reads work even when localStorage is blocked.
   const memory = new Map<string, string>()
+  /** `window.localStorage`, or `null` where it is unavailable (even reading the property can throw). */
   const local = (): StorageLike | null => {
     try {
       return typeof window !== 'undefined' ? window.localStorage : null
@@ -211,12 +239,14 @@ export function browserStorage(): StorageLike {
       return null
     }
   }
+  // Once, when storage is first opened: drop every consume that can no longer be resumed (STORAGE_LEDGER B5).
   try {
     if (typeof window !== 'undefined') forgetExpiredConsumes(window.localStorage)
   } catch {
     // storage unavailable: nothing was kept
   }
   return {
+    // Reads prefer persistent storage and fall back to the memory copy.
     getItem(key) {
       try {
         const s = local()
@@ -226,6 +256,7 @@ export function browserStorage(): StorageLike {
       }
       return memory.get(key) ?? null
     },
+    // Writes go to both: memory always, persistent storage when it works.
     setItem(key, value) {
       memory.set(key, value)
       try {
@@ -247,7 +278,9 @@ export function browserStorage(): StorageLike {
 
 /** The part of the Web Storage API a sweep needs: enumerate, read, remove. */
 export interface EnumerableStorage extends StorageLike {
+  /** How many keys are stored. */
   readonly length: number
+  /** The key at `index`, or `null`. */
   key(index: number): string | null
 }
 
@@ -258,9 +291,11 @@ export interface EnumerableStorage extends StorageLike {
  * not swept: one may stand for storage already paid for, and goes only when certified ({@link clearPendingCertify}).
  */
 export function forgetExpiredConsumes(storage: EnumerableStorage, now: number = Date.now()): number {
+  // Collect first and remove after: removing while iterating would shift the indexes.
   const doomed: string[] = []
   for (let i = 0; i < storage.length; i++) {
     const key = storage.key(i)
+    // Only this module's consume records; the page's other keys are not ours to touch.
     if (!key || !key.startsWith('mw:walrus:consume:')) continue
     let savedAt: unknown
     try {
@@ -268,6 +303,7 @@ export function forgetExpiredConsumes(storage: EnumerableStorage, now: number = 
     } catch {
       savedAt = undefined
     }
+    // Unreadable, too old, or dated in the future (more than a minute of clock skew): none can be resumed.
     if (typeof savedAt !== 'number' || !Number.isFinite(savedAt) || now - savedAt > CONSUME_RESUME_MAX_AGE_MS || savedAt > now + 60_000) {
       doomed.push(key)
     }
@@ -285,6 +321,7 @@ export function pendingCertifyKey(network: string, address: string): string {
 function pendingEntry(key: string, v: unknown): PendingCertify | null {
   if (!v || typeof v !== 'object') return null
   const e = v as Record<string, unknown>
+  // Every field typed, and the entry's own id must equal the key it is stored under (a moved or edited entry is dropped).
   if (
     typeof e.blobId !== 'string' ||
     typeof e.blobObjectId !== 'string' ||
@@ -304,6 +341,7 @@ function pendingEntry(key: string, v: unknown): PendingCertify | null {
  * transaction on-chain).
  */
 export function loadPendingCertifies(storage: StorageLike, key: string): Record<string, PendingCertify> {
+  // A size cap first: storage is untrusted and `JSON.parse` of a huge string is itself a cost.
   const raw = storage.getItem(key)
   if (!raw || raw.length > 1_000_000) return {}
   let v: unknown
@@ -313,6 +351,7 @@ export function loadPendingCertifies(storage: StorageLike, key: string): Record<
     return {}
   }
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  // Keep only well-formed entries, copied field by field.
   const out: Record<string, PendingCertify> = {}
   for (const [id, entry] of Object.entries(v as Record<string, unknown>)) {
     const parsed = pendingEntry(id, entry)
@@ -323,6 +362,7 @@ export function loadPendingCertifies(storage: StorageLike, key: string): Record<
 
 /** Persist one pending certification (merged into the map by blobObjectId). */
 export function savePendingCertify(storage: StorageLike, key: string, entry: Omit<PendingCertify, 'savedAt'>): void {
+  // Read, merge by blob object id, write back: other pending uploads are kept.
   const map = loadPendingCertifies(storage, key)
   map[entry.blobObjectId] = { ...entry, savedAt: Date.now() }
   storage.setItem(key, JSON.stringify(map))
@@ -333,6 +373,7 @@ export function clearPendingCertify(storage: StorageLike, key: string, blobObjec
   const map = loadPendingCertifies(storage, key)
   if (!(blobObjectId in map)) return
   delete map[blobObjectId]
+  // The last entry goes with its key, so nothing is left in the person's browser once there is nothing to resume.
   if (Object.keys(map).length === 0) storage.removeItem(key)
   else storage.setItem(key, JSON.stringify(map))
 }
@@ -362,10 +403,13 @@ export interface GatedAccess {
 
 /** Injected wallet/chain calls for {@link createGatedAccess}. `Tx` is the app's transaction type. */
 export interface GatedAccessPorts<Tx> {
+  /** Where the consume digest is kept so an interrupted upload resumes (use `browserStorage()`). */
   storage: StorageLike
   /** Usually {@link consumeStorageKey}. */
   key: string
+  /** The relay's URL; the gateway origin is signed into every proof. */
   relayHost: string
+  /** The wallet account that holds the pass and signs. */
   address: string
   /** The `Gate` the relay guards (`0x` + 64 lower-case hex): signed into every proof. */
   gateId: string
@@ -377,12 +421,15 @@ export interface GatedAccessPorts<Tx> {
   singleUse: boolean
   /** Build the on-chain consume of `nftId` bound to `nonce` (e.g. access-gate-client `buildConsumeTx`). */
   buildConsume(nftId: string, nonce: string): Tx
+  /** Sign and execute a transaction with the wallet (the consume). */
   signAndExecute(tx: Tx): Promise<{ digest?: string }>
+  /** Wait until the node has the transaction. */
   waitForTransaction(digest: string): Promise<unknown>
   /** Wallet personal-message signer (free — no gas, no use). */
   sign: PersonalMessageSigner
   /** Challenge source (default: the relay gateway's `GET /v1/challenge`). */
   fetchChallenge?: (relayHost: string) => Promise<{ nonce: string; expiresAt: number }>
+  /** Progress for the stepper. */
   onStatus?: (p: UploadProgress) => void
   /** Clock (tests). */
   now?: () => number
@@ -393,13 +440,17 @@ export const CONSUME_RESUME_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000
 
 /** A stored consume: the digest, the pass it spent a use of, and when. */
 interface StoredConsume {
+  /** The consume transaction's digest. */
   digest: string
+  /** The pass it spent a use of. */
   nftId: string
+  /** Epoch ms it was saved. */
   savedAt: number
 }
 
 /** The stored consume if it is well-formed, for this pass and recent; otherwise `null` (browser storage is untrusted). */
 function readStoredConsume(storage: StorageLike, key: string, nftId: string, now: number): StoredConsume | null {
+  // A size cap first (storage is untrusted).
   const raw = storage.getItem(key)
   if (!raw || raw.length > 4096) return null
   let v: unknown
@@ -410,6 +461,7 @@ function readStoredConsume(storage: StorageLike, key: string, nftId: string, now
   }
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null
   const e = v as Record<string, unknown>
+  // A real digest, for THIS pass (another pass's consume must not be presented), saved at a plausible time.
   if (typeof e.digest !== 'string' || !isTransactionDigest(e.digest)) return null
   if (typeof e.nftId !== 'string' || e.nftId !== nftId) return null
   if (typeof e.savedAt !== 'number' || !Number.isFinite(e.savedAt)) return null
@@ -428,12 +480,17 @@ function readStoredConsume(storage: StorageLike, key: string, nftId: string, now
  *   redeemed conflict.
  */
 export function createGatedAccess<Tx>(ports: GatedAccessPorts<Tx>): GatedAccess {
+  // The injected challenge source and clock, or the real ones.
   const challengeOf = ports.fetchChallenge ?? ((host: string) => fetchRelayChallenge(host))
   const now = ports.now ?? Date.now
+  // Whether the consume in use came from storage (reported by `resumed()`).
   let resumedStored = false
 
+  /** The consume digest to sign into the proof: a stored one when valid, else a newly spent one; `undefined` for an unlimited pass. */
   async function ensureConsume(forceFresh: boolean): Promise<string | undefined> {
+    // An unlimited pass spends nothing.
     if (!ports.singleUse) return undefined
+    // After a redeemed conflict the stored digest is spent: forget it so a new use is consumed.
     if (forceFresh) ports.storage.removeItem(ports.key)
     const stored = readStoredConsume(ports.storage, ports.key, ports.nftId, now())
     if (stored) {
@@ -443,9 +500,11 @@ export function createGatedAccess<Tx>(ports: GatedAccessPorts<Tx>): GatedAccess 
     ports.storage.removeItem(ports.key) // malformed, foreign or expired: never reused
     resumedStored = false
     ports.onStatus?.({ step: 'access', detail: 'Using one access pass (approve in wallet)…' })
+    // The consume is bound to a nonce from a fresh challenge, so it cannot be redeemed for anything else.
     const challenge = await challengeOf(ports.relayHost)
     const res = await ports.signAndExecute(ports.buildConsume(ports.nftId, challenge.nonce))
     if (!res.digest || !isTransactionDigest(res.digest)) throw new Error('The consume transaction returned no valid digest.')
+    // Persist BEFORE the upload: if the page is closed now, the next attempt resumes this consume instead of spending a second use.
     ports.storage.setItem(ports.key, JSON.stringify({ digest: res.digest, nftId: ports.nftId, savedAt: now() } satisfies StoredConsume))
     // Best-effort: the gateway re-reads the consume with its own bounded retry, so an indexing
     // delay must not abort the upload; a failed consume is rejected by the gateway.
@@ -454,11 +513,13 @@ export function createGatedAccess<Tx>(ports: GatedAccessPorts<Tx>): GatedAccess 
   }
 
   return {
+    // Called before register, so the consume exists first.
     async prepare() {
       await ensureConsume(false)
     },
     async token(opts) {
       const consumeDigest = await ensureConsume(opts?.forceFresh ?? false)
+      // A challenge per token: it lives minutes, not as long as a register approval or a retry can take.
       const challenge = await challengeOf(ports.relayHost)
       ports.onStatus?.({ step: 'access', detail: 'Signing relay access (approve in wallet)…' })
       return buildAccessProof({
@@ -474,6 +535,7 @@ export function createGatedAccess<Tx>(ports: GatedAccessPorts<Tx>): GatedAccess 
     resumed() {
       return resumedStored
     },
+    // The upload landed: the stored consume is spent for it and must never be offered again.
     uploaded() {
       ports.storage.removeItem(ports.key)
     },
@@ -484,12 +546,17 @@ export function createGatedAccess<Tx>(ports: GatedAccessPorts<Tx>): GatedAccess 
 
 /** Minimal transaction executor (e.g. wallet-adapter's `buildExecutor`). */
 export interface UploadExecutor {
+  /** Sign with the wallet and execute. */
   signAndExecute(tx: unknown): Promise<{ digest: string }>
+  /** Wait until the node has the transaction. */
   waitForTransaction(digest: string): Promise<unknown>
 }
 
+/** The part of the SDK's transaction this orchestrator calls: set the sender and build with a client. */
 interface BuiltTx {
+  /** Set the sender when none is set. */
   setSenderIfNotSet(address: string): void
+  /** Resolve the transaction against a client (so it can be signed). */
   build(opts: { client: ClientWithCoreApi }): Promise<unknown>
 }
 
@@ -497,36 +564,53 @@ interface BuiltTx {
 export interface BlobUploadFlow {
   /** Deterministic from the content, no gas; mints the per-attempt relay nonce. */
   encode(): Promise<{ blobId: string }>
+  /** The register transaction, for the wallet to sign. */
   register(opts: { owner: string; epochs: number; deletable: boolean }): BuiltTx
+  /** Send the encoded blob to the relay and return the availability certificate. */
   upload(opts: { digest: string; deletable?: boolean }): Promise<{
     blobId: string
     blobObjectId: string
     certificate: string
   }>
+  /** The certify transaction, for the wallet to sign. */
   certify(): BuiltTx
+  /** The certified blob. */
   getBlob(): Promise<{ blobId: string }>
 }
 
 /** Client options this flow passes (a subset of `CreateWalrusClientOptions`). */
 export interface FlowClientOptions {
+  /** The Walrus network. */
   network: 'testnet' | 'mainnet'
+  /** A Sui gRPC endpoint (default: the public one). */
   rpcUrl?: string
+  /** The Walrus WASM bundle URL. */
   wasmUrl?: string
+  /** The upload relay. */
   uploadRelayHost: string
+  /** The cap on the relay's tip, in MIST. */
   uploadRelayMaxTipMist?: number
+  /** A provider read per relay request, so a retry presents a fresh token. */
   uploadRelayAuthToken?: () => string | undefined
 }
 
 /** The slice of the package root this flow loads lazily (method syntax: the real root satisfies it). */
 export interface WalrusClientModule {
+  /** Create the Walrus client. */
   createWalrusClient(opts: FlowClientOptions): unknown
+  /** Start the raw-blob upload flow. */
   createBlobUploadFlow(client: unknown, bytes: Uint8Array): BlobUploadFlow
+  /** The public URL of a raw blob. */
   walrusBlobUrl(network: 'testnet' | 'mainnet', blobId: string): string
 }
 
+/** Everything `runBlobUpload` needs, injected: the bytes, the network, the wallet and chain calls, and the callbacks for progress and persistence. */
 export interface RunBlobUploadDeps {
+  /** The content to store. */
   bytes: Uint8Array
+  /** The Walrus network. */
   network: 'testnet' | 'mainnet'
+  /** The upload relay's URL. */
   relayHost: string
   /** Owner and sender (the connected wallet account). */
   address: string
@@ -547,11 +631,13 @@ export interface RunBlobUploadDeps {
    * registering, with the match attached to the error ({@link getDuplicateExisting}).
    */
   findExistingCopy?: (blobId: string) => Promise<ExistingCopy | null>
+  /** Signs and executes the register and certify transactions with the wallet. */
   executor: UploadExecutor
   /** A Sui client used to `build()` the register and certify transactions. */
   suiClient: ClientWithCoreApi
   /** Relay access for an NFT-gated relay ({@link createGatedAccess}); omit for an open relay. */
   access?: GatedAccess
+  /** Progress for the stepper. */
   onStatus: (p: UploadProgress) => void
   /** Called when the upload has landed, before certify: persist it to certify later. */
   onUploaded?: (info: { blobId: string; blobObjectId: string; certificate: string; deletable: boolean }) => void
@@ -561,6 +647,7 @@ export interface RunBlobUploadDeps {
   loadWalrusClient?: () => Promise<WalrusClientModule>
   /** Clock and delay (tests). */
   now?: () => number
+  /** Wait for `ms` milliseconds (a test double makes retries instant). */
   sleep?: (ms: number) => Promise<void>
 }
 
@@ -577,9 +664,12 @@ export interface RunBlobUploadDeps {
  * - A certify failure throws with {@link getCertifyRetry}; the upload is never repeated.
  */
 export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUploadResult> {
-  assertEpochs(deps.epochs) // before any wallet prompt or gas
+  // Validate before any wallet prompt or gas: an out-of-range duration aborts on-chain after both are spent.
+  assertEpochs(deps.epochs)
+  // The Walrus package is loaded lazily, so an app that never uploads never downloads the WASM.
   const load = deps.loadWalrusClient ?? (async (): Promise<WalrusClientModule> => await import('./index.js'))
   const { createWalrusClient, createBlobUploadFlow, walrusBlobUrl } = await load()
+  // The injected clock and delay, or the real ones.
   const now = deps.now ?? Date.now
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
 
@@ -591,6 +681,7 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
     await deps.access.prepare()
   }
 
+  // The client reads the relay token through a provider, so each attempt presents the token minted for it.
   const client = createWalrusClient({
     network: deps.network,
     ...(deps.rpcUrl ? { rpcUrl: deps.rpcUrl } : {}),
@@ -601,9 +692,11 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
   })
   const flow = createBlobUploadFlow(client, deps.bytes)
 
+  // Encoding is deterministic from the content and costs no gas, so the blob id is known before anything is paid.
   deps.onStatus({ step: 'encode', detail: 'Encoding…' })
   const { blobId } = await flow.encode()
 
+  // Precheck: the same content already stored by this owner is offered as "extend" or "certify" instead of paying twice.
   if (!deps.force && deps.findExistingCopy) {
     const existing = await deps.findExistingCopy(blobId)
     if (existing) {
@@ -613,6 +706,7 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
     }
   }
 
+  // The first wallet approval. Registered permanent unless the caller asks otherwise.
   deps.onStatus({ step: 'register', detail: 'Registering blob (approve in wallet)…' })
   const deletable = deps.deletable ?? false
   const regTx = flow.register({ owner: deps.address, epochs: deps.epochs, deletable })
@@ -620,6 +714,7 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
   await regTx.build({ client: deps.suiClient })
   const reg = await deps.executor.signAndExecute(regTx)
   await deps.executor.waitForTransaction(reg.digest)
+  // The relay accepts this registration only for a freshness window; retries are bounded by it.
   const registeredAt = now()
 
   // One upload attempt on this registration. A gated relay gets a fresh challenge and signature
@@ -638,6 +733,7 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
   //   - 409 `leased`, 401/403 stale proof, 429, 5xx, network errors → a fresh token (no new consume).
   // Anything else (a 4xx that is not about the proof) is final.
   const uploadWithRetries = async (): Promise<Awaited<ReturnType<BlobUploadFlow['upload']>>> => {
+    // Whether the next attempt must spend a new use, and whether that has already been done once for a rejected resumed consume.
     let forceFresh = false
     let reconsumed = false
     for (let n = 1; ; n++) {
@@ -645,6 +741,7 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
         return await attempt(forceFresh)
       } catch (e) {
         forceFresh = false
+        // Out of attempts, or the registration is too old for the relay: give up and let the error carry the retry (below).
         const fresh = now() - registeredAt <= REGISTRATION_FRESH_MS
         if (n >= UPLOAD_ATTEMPTS || !fresh) throw e
         if (deps.access && isRedeemedConflict(e)) {
@@ -663,7 +760,9 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
 
   // Certify is a plain owner transaction built from the certificate the live flow holds (no relay,
   // no tip); a retry rebuilds the same transaction.
+  /** What the upload step returned (set before certify can run). */
   let uploaded: Awaited<ReturnType<BlobUploadFlow['upload']>>
+  /** The certify step: the second wallet approval. Safe to run again (it rebuilds the same transaction). */
   const runCertify = async (): Promise<BlobUploadResult> => {
     deps.onStatus({ step: 'certify', detail: 'Certifying (approve in wallet)…' })
     const certTx = flow.certify()
@@ -672,19 +771,24 @@ export async function runBlobUpload(deps: RunBlobUploadDeps): Promise<BlobUpload
     const cert = await deps.executor.signAndExecute(certTx)
     await deps.executor.waitForTransaction(cert.digest)
     const blob = await flow.getBlob()
+    // Certified: the persisted "pending" entry is no longer needed.
     deps.onCertified?.(uploaded.blobObjectId)
     return { blobId: blob.blobId, url: walrusBlobUrl(deps.network, blob.blobId), digest: cert.digest }
   }
 
+  /** Upload (with retries) then certify. */
   const uploadAndCertify = async (): Promise<BlobUploadResult> => {
     uploaded = await uploadWithRetries()
+    // The consume is spent for this upload now.
     deps.access?.uploaded()
+    // Persist before certify, so a closed tab between the two can finish the paid upload later.
     deps.onUploaded?.({
       blobId: uploaded.blobId,
       blobObjectId: uploaded.blobObjectId,
       certificate: uploaded.certificate,
       deletable,
     })
+    // A certify failure must not repeat the upload (it is paid and cannot be replayed): the error carries a certify-only retry.
     try {
       return await runCertify()
     } catch (e) {
@@ -715,6 +819,7 @@ export const REGISTRATION_FRESH_MS = 50 * 60 * 1000
 /** True for failures worth another attempt on the same registration: 429, 5xx, and errors with no HTTP status (network, timeout). */
 function isRetryableUploadFailure(err: unknown): boolean {
   const status = httpStatusOf(err)
+  // No status at all (a network error or a timeout) is worth retrying.
   if (status === null) return true
   return status === 429 || status >= 500
 }

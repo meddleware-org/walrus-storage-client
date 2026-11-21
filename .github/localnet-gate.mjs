@@ -63,6 +63,7 @@ export function decide(input, opts = {}) {
   }
 }
 
+/** All of standard input as UTF-8 text (the workflow pipes `gh run list --json …` into this script). */
 async function readStdin() {
   const chunks = []
   for await (const chunk of process.stdin) chunks.push(chunk)

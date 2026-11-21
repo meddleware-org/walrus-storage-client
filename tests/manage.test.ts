@@ -1,3 +1,7 @@
+/**
+ * Tests for blob management (`src/manage.ts`): each helper passes the right call to the SDK, the first write of attributes on a blob that has none takes the
+ * fallback path, and `null` from `readBlobAttributes` always means "this Blob has no attributes", never "there is no such object". The client is a double that records calls.
+ */
 import { describe, it, expect, vi } from 'vitest'
 import {
   extendBlobLifetime,
@@ -9,10 +13,14 @@ import {
   readBlobAttributes,
 } from '../src/manage.js'
 
+/** The Walrus Blob type as the SDK reports it. */
 const BLOB_TYPE = '0xd84704c17fc870b8764832c535aa6b11f21a95cd6f5bb38a9b07d2cf42220c66::blob::Blob'
 
+/** A Walrus-client double: it records the arguments of every SDK call it receives, and returns a digest from `execute*` methods and a transaction object from the builders. */
 function fakeClient() {
+  // method name → the arguments of each call.
   const calls: Record<string, any[]> = {}
+  /** A recording method for `k`. */
   const record = (k: string) => (arg: any) => {
     ;(calls[k] ||= []).push(arg)
     if (k === 'readBlobAttributes') return { color: 'blue' }
@@ -42,8 +50,10 @@ function fakeClient() {
   return { client: client as any, calls }
 }
 
+/** A stand-in signer: the SDK is a double, so it is never asked to sign. */
 const signer = { __signer: true } as any
 
+// The Node helpers sign and execute through the SDK, the browser helpers only build; both are checked at the SDK boundary, which is a double.
 describe('extendBlobLifetime', () => {
   it('threads ExtendOptions (epochs form) and returns the digest', async () => {
     const { client, calls } = fakeClient()
@@ -56,6 +66,7 @@ describe('extendBlobLifetime', () => {
     expect(res).toEqual({ digest: 'DIGEST_executeExtendBlobTransaction' })
   })
 
+  // The two forms of the options are exclusive (the type forbids both); each must reach the SDK unchanged.
   it('threads ExtendOptions (endEpoch form)', async () => {
     const { client, calls } = fakeClient()
     await extendBlobLifetime(client, 'OBJ', signer, { endEpoch: 500 })
@@ -64,6 +75,7 @@ describe('extendBlobLifetime', () => {
 })
 
 describe('extendBlobLifetimeTransaction', () => {
+  // The browser variant must only BUILD: signing here would bypass the wallet.
   it('returns an unsigned transaction (wallet-safe)', () => {
     const { client } = fakeClient()
     const tx = extendBlobLifetimeTransaction(client, 'OBJ', { epochs: 3 })
@@ -72,6 +84,7 @@ describe('extendBlobLifetimeTransaction', () => {
 })
 
 describe('certifyBlobTransaction', () => {
+  // `deletable` defaults to false, matching how our uploads register; a mismatch would abort on-chain.
   it('passes the base64 certificate + ids through and returns an unsigned tx', () => {
     const { client, calls } = fakeClient()
     const tx = certifyBlobTransaction(client, {
@@ -98,6 +111,7 @@ describe('estimateStorageCost', () => {
   })
 })
 
+// Attributes live in a dynamic field that does not exist until the first write; the SDK throws for it and these helpers handle that case.
 describe('setBlobAttributes / readBlobAttributes', () => {
   it('executes attribute write with signer and returns digest', async () => {
     const { client, calls } = fakeClient()
@@ -116,6 +130,7 @@ describe('setBlobAttributes / readBlobAttributes', () => {
     expect(tx).toEqual({ __tx: 'writeBlobAttributesTransaction' })
   })
 
+  // The common path: the SDK answers, so the map comes back as it is.
   it('readBlobAttributes returns the attribute map', async () => {
     const { client } = fakeClient()
     const attrs = await readBlobAttributes(client, 'OBJ')
@@ -123,12 +138,15 @@ describe('setBlobAttributes / readBlobAttributes', () => {
   })
 })
 
+// The same SDK error means "no attributes yet" and "no such blob"; the helpers must tell them apart by checking the Blob object.
 describe('missing-attributes handling', () => {
+  // The two error codes the SDK uses: a missing dynamic field (no attributes yet) and a missing object (no such blob).
   const missing = Object.assign(new Error('Dynamic field not found'), { code: 'dynamicFieldNotFound' })
   const noObject = Object.assign(new Error('Object 0xOBJ does not exist'), { code: 'notExists' })
 
   it('readBlobAttributes returns null for a Blob without a metadata field and rethrows other errors', async () => {
     const { client } = fakeClient()
+    // Both the throwing form (older SDKs) and the null form (current) must give `null`, and the Blob must be confirmed in each case.
     client.walrus.readBlobAttributes.mockImplementationOnce(() => {
       throw missing
     })
@@ -156,6 +174,7 @@ describe('missing-attributes handling', () => {
     await expect(readBlobAttributes(client, '0xCOIN')).rejects.toThrow(/not a Walrus Blob/)
   })
 
+  // Classification is by `code` only: an error whose message merely mentions a missing field must not be swallowed.
   it('does not take an error for a missing field because its message says so', async () => {
     const { client } = fakeClient()
     client.walrus.readBlobAttributes.mockImplementationOnce(() => {
@@ -180,6 +199,7 @@ describe('missing-attributes handling', () => {
     await expect(setBlobAttributes(client, 'OBJ', signer, { a: 'b' })).rejects.toThrow('boom')
   })
 
+  // The fallback builds a transaction on an object that may not exist; the Blob is confirmed first, so a wrong id fails clearly instead.
   it('setBlobAttributes does not take the fallback path for a wrong object id', async () => {
     const { client } = fakeClient()
     client.walrus.executeWriteBlobAttributesTransaction.mockImplementationOnce(() => {

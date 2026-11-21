@@ -6,6 +6,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
+    // Only the files named `*.integration.test.ts`, so the default config never picks them up and the harness helpers are not run as tests.
     include: ['tests/integration/**/*.integration.test.ts'],
     // Real blob writes (encode → register → upload → certify) are slow; give them room.
     testTimeout: 120_000,

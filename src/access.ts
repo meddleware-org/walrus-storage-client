@@ -1,5 +1,9 @@
 /**
- * NFT-gated relay access helpers.
+ * @file NFT-gated relay access helpers.
+ *
+ * Role: a thin, Walrus-flavoured layer over `@meddleware/access-gate-gateway-client`: it renames the protocol's types for this package's callers and adds the
+ * one-call `createRelayAccessToken`. No protocol logic lives here (the message, the token encoding and every pre-sign check are in the gateway client).
+ * Main exports: `createRelayAccessToken`, `buildAccessProofToken`, `fetchRelayChallenge`, `personalMessage`. Tested in `tests/access.test.ts`.
  *
  * When the Meddleware upload relay runs behind the `access-gate-gateway`, an upload must
  * carry a wallet-signed **access proof** proving the caller holds the required access NFT.
@@ -12,6 +16,7 @@
  * `createRelayAccessToken` convenience function.
  */
 
+// The protocol's own primitives; this module renames and composes them.
 import {
   type Challenge,
   type AccessProof,
@@ -84,7 +89,9 @@ export async function createRelayAccessToken(opts: {
   consumeDigest?: string
   signal?: AbortSignal
 }): Promise<string> {
+  // Step 1: a fresh challenge from the relay's gateway (the same host is then signed into the message, so the token works nowhere else).
   const challenge = await fetchChallenge(opts.relayHost, { signal: opts.signal })
+  // Step 2: sign and encode. The gateway client refuses anything a gateway would refuse before the wallet is asked to sign.
   return buildAccessProof({
     address: opts.address,
     challenge,
@@ -92,6 +99,7 @@ export async function createRelayAccessToken(opts: {
     gateway: opts.relayHost,
     gateId: opts.gateId,
     network: opts.network,
+    // Only for a single-use gateway: the consume line is part of the signed message, so omitting it is also meaningful.
     ...(opts.consumeDigest ? { consumeDigest: opts.consumeDigest } : {}),
   })
 }

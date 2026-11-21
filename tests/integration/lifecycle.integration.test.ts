@@ -20,9 +20,12 @@ import {
 import { fetchOwnedWalrusBlobs } from '../../src/query.js'
 
 describe.skipIf(!LOCALNET_READY)('walrus-storage-client localnet blob lifecycle', () => {
+  // The client and signer are created once in `beforeAll`; the cases run in order and share the blob the first one uploads.
   let client: ReturnType<typeof localnetWalrusClient>
   let signer: ReturnType<typeof localnetSigner>
+  // A payload unique to this run (the timestamp), so an earlier run's blob cannot satisfy a test.
   const payload = new TextEncoder().encode(`meddleware-localnet-${Date.now()}`)
+  // Set by the upload test: the content-addressed blob id and the owned Blob object.
   let blobId: string
   let blobObjectId: string
 
@@ -41,16 +44,19 @@ describe.skipIf(!LOCALNET_READY)('walrus-storage-client localnet blob lifecycle'
     blobId = res.blobId
     blobObjectId = res.blobObjectId
 
+    // The aggregator is the independent read path: bytes written through the relay must come back byte for byte.
     const readBack = await aggregatorRead(blobId)
     expect(Array.from(readBack)).toEqual(Array.from(payload))
   })
 
+  // Same bytes, same blob id: this is what makes the "already stored" precheck in `runBlobUpload` possible.
   it('is content-addressed: re-uploading the same bytes yields the same blobId', async () => {
     const again = await uploadImageBytesWithRetry(client, payload, signer, { epochs: 3 })
     expect(again.blobId).toBe(blobId)
   })
 
   it('extends the blob lifetime (endEpoch increases)', async () => {
+    // Read the epoch range before and after, so the assertion is about the change, not a constant.
     const before = await fetchOwnedWalrusBlobs(localnetSuiClient(), client, localnetAddress())
     const mineBefore = before.find((b) => b.objectId === blobObjectId)
     expect(mineBefore, 'uploaded blob should be owned').toBeDefined()
@@ -86,6 +92,7 @@ describe.skipIf(!LOCALNET_READY)('walrus-storage-client localnet blob lifecycle'
     expect(mine!.startEpoch).toBeLessThanOrEqual(mine!.endEpoch)
   })
 
+  // The SDK's own error for this case is the same as for "no attributes yet"; the helper must report the truth.
   it('does not report "no attributes" for an object that is not a Blob', async () => {
     await expect(readBlobAttributes(client, `0x${'ab'.repeat(32)}`)).rejects.toThrow(/no Walrus Blob object/)
   })

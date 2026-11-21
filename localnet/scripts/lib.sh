@@ -126,10 +126,15 @@ LN_SUI_CONFIG_DIR="${LN_ROOT}/.sui"
 # file's directory (the upstream checkout), not the override's directory, so we must use absolute paths.
 export MW_DEPLOYER_RUNTIME_CFG="${LN_GENERATED}/deployer-sui-config"
 
+# Logging helpers. `log` prints progress (cyan), `warn` a problem that does not stop the run (yellow, to stderr), `die` a fatal one (red, to stderr, exit 1).
+# Usage: log <message...>
 log()  { printf '\033[1;36m[localnet]\033[0m %s\n' "$*"; }
+# Usage: warn <message...>
 warn() { printf '\033[1;33m[localnet]\033[0m %s\n' "$*" >&2; }
+# Usage: die <message...>   (never returns)
 die()  { printf '\033[1;31m[localnet]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Stop unless a tool is installed.   Usage: require <command>
 require() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
 
 # Docker invocation. Direct access is the default. The harness never escalates on its own: when the
@@ -149,6 +154,7 @@ elif [ "${MW_ALLOW_SUDO}" = "1" ]; then
 else
   die "cannot reach the Docker daemon as this user. Add yourself to the docker group (sudo usermod -aG docker \$USER, then re-login), or opt in to sudo for docker with MW_ALLOW_SUDO=1."
 fi
+# Run docker the way the check above decided (directly, or through sudo by explicit opt-in).   Usage: dock <docker args...>
 dock() { "${MW_DOCKER[@]}" "$@"; }
 
 # Write compose variable overrides to the testbed .env file so Docker Compose can interpolate them
@@ -186,7 +192,10 @@ yaml_scalar() { # yaml_scalar <file> <key>
 #   wal_balance_json <address>   → the CLI's `balance --with-coins --json` output ('' on error)
 #   wal_largest_coin <address>   → "<coinType> <coinObjectId> <balance>" of its largest WAL coin ('' if none)
 #   wal_total <address>          → the address's total WAL balance in FROST (0 if none)
+# The Sui CLI's JSON balance listing for an address ('' on error, so a caller can test for emptiness).
 wal_balance_json() { sui client balance "$1" --with-coins --json 2>/dev/null || true; }
+# The address's largest WAL coin as "<coinType> <coinObjectId> <balance>" ('' if none). The embedded Python walks the JSON for any object with a `coins` list,
+# because the CLI's nesting differs between versions; a parse error goes to stderr and the result is '' (never a made-up coin).
 wal_largest_coin() {
   wal_balance_json "$1" | python3 -c '
 import sys, json
@@ -208,6 +217,7 @@ except Exception as err:
     sys.stderr.write("wal_largest_coin: " + str(err) + "\n")
 ' 2>/dev/null || true
 }
+# The address's total WAL balance in FROST (0 if none or on error), summed over every WAL coin in the same walk as above.
 wal_total() {
   wal_balance_json "$1" | python3 -c '
 import sys, json

@@ -2,8 +2,10 @@
 # Tear down the upload-relay and the Sui + Walrus localnet testbed. Pass --clean to also remove the
 # harvested config, the .env.localnet contract, and the upstream checkout.
 set -euo pipefail
+# The helpers (`log`, `warn`, `dock`, the paths) come from lib.sh, found relative to this file so the script works from any directory.
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
+# First the relay and aggregator: they were started on the testbed's network, which the compose file needs to name.
 if [ -f "${RELAY_COMPOSE}" ]; then
   LOCAL_TESTBED_NETWORK="$(dock network ls --format '{{.Name}}' | grep -E 'local.?testbed' | head -1 || true)"
   export LOCAL_TESTBED_NETWORK
@@ -11,12 +13,14 @@ if [ -f "${RELAY_COMPOSE}" ]; then
   log "relay stopped"
 fi
 
+# Then the testbed itself (`-v` removes its volumes, so nothing of the chain survives).
 if [ -f "${UPSTREAM_COMPOSE}" ]; then
   write_testbed_env  # ensure compose can interpolate vars even under sudo
   testbed_compose down -v >/dev/null 2>&1 || true
   log "testbed stopped"
 fi
 
+# --clean: also remove everything this harness generated, so the next `up.sh` starts from nothing.
 if [ "${1:-}" = "--clean" ]; then
   # The testbed Sui config (localnet/.sui) only holds keys for the chain being destroyed.
   rm -rf "${LN_GENERATED}" "${LN_ENV_FILE}" "${LN_SUI_CONFIG_DIR}" 2>/dev/null || true

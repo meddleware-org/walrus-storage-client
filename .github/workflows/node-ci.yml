@@ -1,3 +1,6 @@
+# Node CI for the Walrus storage client: install, dependency checks, type-check, lint, the unit tests and the declaration build on Node 26; shellcheck over the localnet
+# harness; then the unit tests again on Node 24, the minimum the package declares (`engines`). It runs on every push to main and every pull request. The heavy localnet
+# suite is separate (integration.yml, nightly), and the release workflow (npm-publish.yml) refuses a tag while that suite is red.
 name: Node CI
 
 on:
@@ -5,9 +8,11 @@ on:
     branches: ["main"]
   pull_request:
 
+# Read-only: CI needs nothing but the checkout.
 permissions:
   contents: read
 
+# No tool may phone home from CI (the fleet's privacy rule; npm, Node and other tools honour it).
 env:
   DO_NOT_TRACK: "1"
 
@@ -16,32 +21,43 @@ jobs:
     name: Type-check & test
     runs-on: ubuntu-latest
     steps:
+      # Actions are pinned by full commit SHA with the version in a comment (D12).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Node 26 is the fleet baseline (D56).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26'
 
+      # `npm ci` installs exactly the lockfile, so CI tests what was reviewed.
       - name: Install dependencies
         run: npm ci
+      # Fails if a peer range is unsatisfied or the tree is inconsistent (the SDK is a peer, so a mismatch would reach consumers).
       - name: Dependency tree is valid (peer ranges satisfied)
         run: npm ls --all >/dev/null
 
+      # High and critical advisories fail the build. This repository does not depend on @meddleware/frontend-config, so it does not use that package's gate
+      # (which adds an expiring allow-list); the threshold is the same, and there is no allow-list to keep.
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      # tsc over src/, tests/ and the integration config (the tests are included, so a type error in a test fails here).
       - name: Type-check
         run: npm run type-check
 
+      # eslint with the TypeScript rule set (there are no Vue files in this package; localnet/ is not linted).
       - name: Lint JS (eslint)
         run: npm run lint:js
 
+      # The offline unit tests (the localnet suite is nightly, in integration.yml).
       - name: Test
         run: npm test
 
+      # The published declarations; failing here means a type that cannot be declared.
       - name: Build (declarations)
         run: npm run build
 
+  # The localnet harness is bash; shellcheck catches the mistakes bash hides.
   shellcheck:
     name: shellcheck (localnet harness)
     runs-on: ubuntu-latest
@@ -51,12 +67,14 @@ jobs:
       - name: shellcheck
         run: shellcheck -x -P SCRIPTDIR localnet/scripts/*.sh localnet/files/*.sh
 
+  # The package declares `engines: node >=24`; this proves the claim by running the tests on that version.
   node24-compat:
     name: Node 24 compatibility (engines >=24)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The oldest supported Node, not the baseline.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'

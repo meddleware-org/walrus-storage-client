@@ -7,12 +7,14 @@ import tseslint from 'typescript-eslint'
 export default defineConfig(
   // localnet/ vendors an upstream Walrus checkout with its own tooling — not ours to lint.
   globalIgnores(['**/dist/**', '**/coverage/**', '**/*.d.ts', 'localnet/**']),
+  // The TypeScript rule set, applied to every TypeScript file.
   {
     name: 'walrus-storage-client/typescript',
     files: ['**/*.{ts,mts,tsx}'],
     extends: [tseslint.configs.recommended],
   },
 
+  // Repository-specific adjustments to that set.
   {
     name: 'walrus-storage-client/overrides',
     files: ['**/*.{ts,mts,tsx}'],

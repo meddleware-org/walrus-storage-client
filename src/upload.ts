@@ -1,3 +1,13 @@
+/**
+ * @file Uploading to Walrus: one-shot Node uploads and the step-by-step flows a browser wallet drives.
+ *
+ * Role: two kinds of stored object. A quilt (a bundle of files) is the default for documents; a raw blob is served directly at its blob URL, which assets such as token icons
+ * need. Each has a Node helper that signs with a keypair and a flow object for a browser, where the wallet signs the register and certify steps. `epochs` is validated against
+ * the network's live maximum before any prompt, because the on-chain abort it prevents costs gas and a signature.
+ *
+ * Main exports: `uploadBytes`, `createUploadFlow`, `uploadImageBytes`, `createBlobUploadFlow`, `maxEpochsAhead`, `LONG_TERM_EPOCHS`. Tested in `tests/upload.test.ts`; the
+ * resumable, retained flow with relay access is in `flow.ts`.
+ */
 import { WalrusFile } from '@mysten/walrus'
 import type { Signer } from '@mysten/sui/cryptography'
 import type { createWalrusClient } from './client.js'
@@ -6,6 +16,7 @@ import { MAX_SINGLE_RESERVATION_EPOCHS, assertEpochs } from './limits.js'
 /** The return type of {@link createWalrusClient}. */
 export type WalrusClient = ReturnType<typeof createWalrusClient>
 
+// Re-exported so a caller can clamp a requested duration with the same constant.
 export { MAX_SINGLE_RESERVATION_EPOCHS }
 
 /**
@@ -14,11 +25,13 @@ export { MAX_SINGLE_RESERVATION_EPOCHS }
  * wallet prompt is shown.
  */
 export async function maxEpochsAhead(client: WalrusClient): Promise<number> {
+  // The live value is a u32 in the system object; the SDK's type for it is loose, so it is checked before use.
   try {
     const state = (await client.walrus.systemState()) as { max_epochs_ahead?: unknown }
     const n = Number(state?.max_epochs_ahead)
     return Number.isSafeInteger(n) && n >= 1 ? n : MAX_SINGLE_RESERVATION_EPOCHS
   } catch {
+    // A node that cannot answer must not block an upload: fall back to the constant (53 on testnet and mainnet).
     return MAX_SINGLE_RESERVATION_EPOCHS
   }
 }
@@ -53,6 +66,7 @@ export type UploadResult = {
 
 /** `epochs` validated against the network's live maximum; the maximum itself when omitted. */
 async function resolveEpochs(client: WalrusClient, epochs: number | undefined): Promise<number> {
+  // The live maximum; an omitted value means "as long as Walrus allows", an explicit one is validated against it.
   const max = await maxEpochsAhead(client)
   return epochs === undefined ? max : assertEpochs(epochs, max)
 }
@@ -70,6 +84,7 @@ export async function uploadBytes(
   signer: Signer,
   options: UploadOptions = {},
 ): Promise<UploadResult> {
+  // One file in a quilt, with its identifier and tags.
   const file = WalrusFile.from({ contents, identifier, tags: options.tags })
   const [result] = await client.walrus.writeFiles({
     files: [file],
@@ -79,6 +94,7 @@ export async function uploadBytes(
     deletable: options.deletable ?? false,
     signer,
   })
+  // One file in, one result out; none means the SDK returned nothing to report.
   if (!result) throw new Error('Walrus returned no write result for the file.')
   return { blobId: result.blobId, blobObjectId: result.id }
 }
@@ -93,6 +109,7 @@ export function createUploadFlow(
   identifier: string,
   options: UploadOptions = {},
 ) {
+  // Only the tags matter here: the epochs and deletable flag are passed to the flow's `register` step by the caller.
   const file = WalrusFile.from({ contents, identifier, tags: options.tags })
   return client.walrus.writeFilesFlow({ files: [file] })
 }
@@ -116,6 +133,7 @@ export async function uploadImageBytes(
   signer: Signer,
   options: UploadOptions = {},
 ): Promise<UploadResult> {
+  // A raw blob (not a quilt): `GET /v1/blobs/<blobId>` returns exactly these bytes.
   const res = await client.walrus.writeBlob({
     blob: contents,
     // Default to the largest reservation Walrus accepts (see uploadBytes).
@@ -139,5 +157,6 @@ export async function uploadImageBytes(
  * ```
  */
 export function createBlobUploadFlow(client: WalrusClient, contents: Uint8Array) {
+  // The SDK's flow object; its steps are listed in the comment above.
   return client.walrus.writeBlobFlow({ blob: contents })
 }

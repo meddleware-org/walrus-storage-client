@@ -15,6 +15,7 @@ export const LOCALNET_READY =
   !!process.env.WALRUS_STAKING_POOL_ID &&
   !!process.env.WALRUS_TEST_SECRET_KEY
 
+/** The environment variable `name`, or a clear error naming it (the suites need the whole contract, so a missing variable is a setup mistake, not a test failure). */
 function required(name: string): string {
   const v = process.env[name]
   if (!v) throw new Error(`localnet integration: missing env ${name} (did you source .env.localnet?)`)
@@ -23,6 +24,7 @@ function required(name: string): string {
 
 /** The harvested Walrus package config for the running testbed. */
 export function localnetPackageConfig(): WalrusPackageConfig {
+  // A comma-separated list in the env contract; empty entries are dropped, and the field is omitted when there are none.
   const exchangeIds = (process.env.WALRUS_EXCHANGE_IDS ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -58,6 +60,7 @@ export function localnetSigner(): Ed25519Keypair {
   return Ed25519Keypair.fromSecretKey(required('WALRUS_TEST_SECRET_KEY'))
 }
 
+/** The funded test wallet's address (from the env contract). */
 export const localnetAddress = (): string => required('WALRUS_TEST_ADDRESS')
 
 /**
@@ -73,7 +76,9 @@ export async function uploadImageBytesWithRetry(
   try {
     return await uploadImageBytes(...args)
   } catch (e) {
+    // Only the "nodes have not seen the registration yet" failure is retried; anything else is a real failure.
     if (!(e instanceof NotEnoughBlobConfirmationsError)) throw e
+    // One poll cycle of the storage nodes, then the same bytes again.
     await new Promise((r) => setTimeout(r, 10_000))
     return uploadImageBytes(...args)
   }
@@ -81,6 +86,7 @@ export async function uploadImageBytesWithRetry(
 
 /** GET a blob's raw bytes from the localnet aggregator. */
 export async function aggregatorRead(blobId: string): Promise<Uint8Array> {
+  // The localnet aggregator serves the raw bytes of a blob at this path.
   const host = required('WALRUS_AGGREGATOR_HOST')
   const res = await fetch(`${host}/v1/blobs/${blobId}`)
   if (!res.ok) throw new Error(`aggregator read ${blobId} → HTTP ${res.status}`)
@@ -98,7 +104,9 @@ export async function assertLocalnetWalFunded(
   blobSize: number,
   plan: WalPlan,
 ): Promise<void> {
+  // The live price from the testbed's system object, with margin.
   const need = await requiredWal((size, epochs) => client.walrus.storageCost(size, epochs), blobSize, plan)
+  // The wallet's WAL balance (the WAL coin type comes from the env contract).
   const { balance } = await client.core.getBalance({
     owner: localnetAddress(),
     coinType: required('WALRUS_WAL_COIN_TYPE'),

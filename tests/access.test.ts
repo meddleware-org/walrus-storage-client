@@ -1,3 +1,8 @@
+/**
+ * Tests for the relay-access helpers (`src/access.ts`): the signed message is the audience-bound v3 text, the token encodes a proof with or without a consume digest,
+ * the challenge is fetched from the relay, and a non-canonical gate is refused before the wallet is asked to sign. The protocol itself is tested in
+ * `access-gate-gateway-client`; these tests prove this package wires it correctly. `fetch` is stubbed.
+ */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { decodeAccessProof } from '@meddleware/access-gate-gateway-client'
 import {
@@ -7,18 +12,22 @@ import {
   createRelayAccessToken,
 } from '../src/access.js'
 
+// Undo stubs after each test, so a stubbed `fetch` cannot leak into the next one.
 afterEach(() => vi.restoreAllMocks())
 
+// A canonical gate id and a valid transaction digest.
 const GATE = '0x' + 'a1'.repeat(32)
 const DIGEST = '5Wq9tE4gXz8hEvFhYt8KkTJb2Pp6qXqj8cRk3xN1mYdL'
+/** UTF-8 text of some bytes. */
 const text = (b: Uint8Array) => new TextDecoder().decode(b)
 
+/** The JSON inside a proof token (the token is base64 of it), so a test can compare fields without the decoder under test. */
 function decode(token: string) {
   return JSON.parse(Buffer.from(token, 'base64').toString('utf-8'))
 }
 
 describe('relay access proof', () => {
-  it('derives the audience-bound v2 message', () => {
+  it('derives the audience-bound v3 message', () => {
     expect(
       text(personalMessage({ origin: 'https://relay.example', gateId: GATE, network: 'testnet', nonce: 'abc' })),
     ).toBe(`access-gate-gateway:access:v3\norigin:https://relay.example\ngate:${GATE}\nnetwork:testnet\nnonce:abc`)
