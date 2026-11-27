@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.36] - 2026-11-27
+
 ### Changed
 
 - Documentation: every file is annotated line by line and has a header; added `CONTRIBUTING.md`; README Development section; CLAUDE.md Commands, Gotchas and Related; the localnet shell harness and its
